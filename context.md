@@ -594,3 +594,101 @@ python -m wcfp.cli init-db && python -m wcfp.cli enqueue-seeds && python -m wcfp
 | 2026-04-25 | 4-tier pipeline (4b->14b->32b->70b)   | ~80% resolved cheaply; DGX for the hard 1%                   |
 | 2026-04-25 | owlready2 + rdflib for ontology        | Standard toolchain; Protégé-compatible OWL                    |
 | 2026-04-25 | tiktoken for token-count routing       | Fast, accurate, no GPU                                        |
+
+---
+
+## 19. Portable Clone & State Restore
+
+Any machine should be able to:
+1. `git clone` the repo
+2. Run `bash setup.sh` — pulls DB state, downloads missing Ollama models, installs deps
+3. Continue from the last saved scrape state
+4. On finish: push DB + data back to remote storage
+
+### Remote state storage options (in order of preference)
+
+| Option               | Tool          | Free tier | Notes                                      |
+|----------------------|---------------|-----------|--------------------------------------------|
+| Google Cloud Storage | `gcloud` CLI  | 5 GB free | Simple bucket; works from any machine      |
+| Backblaze B2         | `rclone`      | 10 GB free| Cheapest; S3-compatible                    |
+| AWS S3               | `aws` CLI     | 5 GB free | Most universal; widely supported           |
+| GitHub LFS           | `git lfs`     | 1 GB free | DuckDB can exceed 1 GB; not recommended    |
+| Self-hosted MinIO    | `rclone`/S3   | unlimited | Best if DGX has a static IP                |
+
+**Recommended: Backblaze B2 + rclone** — cheapest at scale, S3-compatible,
+works with `rclone sync` from any machine.
+
+### State files to sync (upload after run, download before run)
+
+```
+data/wikicfp.duckdb          # primary DB — always sync
+data/qdrant/                 # Qdrant vectors — sync if present
+data/archive/                # Parquet snapshots — sync
+ontology/                    # OWL + JSON — sync
+```
+
+### `setup.sh` contract (to be implemented)
+
+```bash
+bash setup.sh [--skip-models] [--skip-db-pull] [--storage gcs|b2|s3|minio]
+```
+
+Steps performed:
+1. Check Python 3.10+; create `.venv`; `pip install -r requirements.txt`
+2. `docker compose up -d` (Qdrant + Redis)
+3. Pull DB state from remote storage into `data/` (skip if `--skip-db-pull`)
+4. Check each model in `MODEL_HOST`; `ollama pull <model>` if missing (skip if `--skip-models`)
+5. Verify WikiCFP connectivity
+6. Write last-setup timestamp to `README.md`
+
+After a run completes, `pipeline.py` calls `sync_state(direction="push")`
+which uploads changed files back to remote storage.
+
+### `wcfp/sync.py` interface
+
+```python
+def pull_state(storage: str = "b2") -> None:
+    """Download DB + vectors + ontology from remote before starting a run."""
+
+def push_state(storage: str = "b2") -> None:
+    """Upload DB + vectors + ontology to remote after a run completes."""
+
+def get_rclone_remote(storage: str) -> str:
+    """Return rclone remote name: 'b2:wikicfp-state', 'gcs:wikicfp-state', etc."""
+```
+
+Storage backend is selected from env var `WCFP_STORAGE` (default: `b2`).
+Remote bucket/path configured in `rclone.conf` (not committed; per-machine).
+
+### Ollama model check in `setup.sh`
+
+```bash
+MODELS_NEEDED="qwen3:4b qwen3:14b qwen3:32b mistral-nemo:12b deepseek-r1:32b deepseek-r1:70b nomic-embed-text"
+for model in $MODELS_NEEDED; do
+    if ! ollama list | grep -q "^$model"; then
+        echo "Pulling $model ..."
+        ollama pull "$model"
+    fi
+done
+```
+
+On the RTX 3080 machine only pull: `qwen3:4b qwen3:14b mistral-nemo:12b nomic-embed-text`
+On the RTX 4090 machine only pull: `qwen3:32b deepseek-r1:32b`
+On DGX only pull: `deepseek-r1:70b`
+
+Controlled via env var `WCFP_MACHINE=rtx3080|rtx4090|dgx` — `setup.sh` reads it and
+only pulls the models relevant for that machine.
+
+### GitHub push after run
+
+After each pipeline run, `pipeline.py` also commits updated reports and
+`data/latest.json` back to the repo and pushes:
+
+```bash
+git add reports/ data/latest.json ontology/
+git commit -m "auto: scrape run $(date +%Y-%m-%d)"
+git push origin main
+```
+
+Requires a deploy key or GITHUB_TOKEN in the environment.
+Heavy state files (DuckDB, Qdrant) go to rclone remote, NOT git.
