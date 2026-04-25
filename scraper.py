@@ -206,7 +206,10 @@ def main(max_pages: int = 3) -> None:
     all_confs = deduplicate(all_confs)
     print_summary(all_confs)
     save(all_confs, Path("data"))
-    print("\nDone.")
+
+    from generate_md import generate_all
+    print("\nGenerating Markdown reports...")
+    generate_all()
 
 
 if __name__ == "__main__":
@@ -214,5 +217,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Scrape WikiCFP conferences.")
     parser.add_argument("--pages", type=int, default=3, help="Max pages per keyword (default: 3)")
+    parser.add_argument("--md-only", action="store_true", help="Skip scraping; regenerate MD reports from existing data")
     args = parser.parse_args()
-    main(max_pages=args.pages)
+
+    if args.md_only:
+        from generate_md import generate_all
+        generate_all()
+    else:
+        main(max_pages=args.pages)

@@ -1,6 +1,11 @@
 # WikiCFP Conference Scraper
 
-Scrapes [WikiCFP](http://www.wikicfp.com) and collects upcoming conferences in:
+Scrapes [WikiCFP](http://www.wikicfp.com) and collects conferences across categories and regions.
+After each scrape, Markdown reports are auto-generated in `reports/`.
+
+---
+
+## Categories
 
 | Category | Keywords searched |
 |---|---|
@@ -11,8 +16,6 @@ Scrapes [WikiCFP](http://www.wikicfp.com) and collects upcoming conferences in:
 | ChipDesign | VLSI, chip design, EDA, FPGA, semiconductor, SoC |
 | Math | mathematics, mathematical, algebra, combinatorics, number theory |
 | Legal | law, legal, jurisprudence, cyber law, intellectual property |
-
-Results are saved as **JSON** and **CSV** under `data/`.
 
 ---
 
@@ -26,25 +29,74 @@ source .venv/bin/activate
 python3 scraper.py
 ```
 
+---
+
 ## Usage
 
 ```
-python3 scraper.py [--pages N]
+python3 scraper.py [--pages N] [--md-only]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--pages` | 3 | Max search-result pages per keyword |
+| `--pages N` | `3` | Max search-result pages per keyword |
+| `--md-only` | — | Skip scraping; regenerate reports from existing `data/latest.json` |
 
-## Output
+Regenerate reports without re-scraping:
+
+```bash
+python3 scraper.py --md-only
+# or directly:
+python3 generate_md.py
+```
+
+---
+
+## Generated Reports (`reports/`)
+
+### By Category
+
+| File | Contents |
+|---|---|
+| `reports/ai.md` | AI — Artificial Intelligence |
+| `reports/ml.md` | ML — Machine Learning & Deep Learning |
+| `reports/devops.md` | DevOps & Site Reliability Engineering |
+| `reports/linux.md` | Linux & Open Source |
+| `reports/chipdesign.md` | Chip Design (VLSI / EDA / FPGA) |
+| `reports/math.md` | Mathematics |
+| `reports/legal.md` | Legal & Cyber Law |
+
+### By Date
+
+| File | Contents |
+|---|---|
+| `reports/by_date.md` | All conferences sorted by start date |
+
+### By Region
+
+| File | Contents |
+|---|---|
+| `reports/usa.md` | USA conferences |
+| `reports/europe.md` | European conferences (incl. UK & Switzerland) |
+| `reports/uk.md` | UK conferences |
+| `reports/singapore.md` | Singapore conferences |
+| `reports/switzerland.md` | Switzerland conferences |
+| `reports/india.md` | India conferences, **organised state-wise** |
+
+Each report has two sections — **Upcoming** (sorted earliest first) and **Past** (sorted most-recent first).
+Reports are regenerated on every scrape run, so past conferences are automatically moved to the Past section.
+
+---
+
+## Data Files (`data/`)
 
 | File | Description |
 |---|---|
-| `data/latest.json` | Most recent full run (JSON array) |
-| `data/conferences_YYYYMMDD_HHMMSS.json` | Timestamped run archives |
+| `data/latest.json` | Most recent run (always overwritten) |
+| `data/conferences_YYYYMMDD_HHMMSS.json` | Timestamped run archive |
 | `data/conferences_YYYYMMDD_HHMMSS.csv` | Same data in CSV format |
 
-Each entry contains:
+Each entry:
 
 ```json
 {
@@ -59,11 +111,13 @@ Each entry contains:
 }
 ```
 
+---
+
 ## Requirements
 
 - Python 3.10+
-- See `requirements.txt` (`requests`, `beautifulsoup4`, `lxml`)
+- `requests`, `beautifulsoup4`, `lxml` (installed by `setup.sh`)
 
 ---
 
-Last setup: 2026-04-25 15:58:00
+Last setup: —
