@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Data output (tracked separately or gitignored as preferred)
+data/conferences_*.json
+data/conferences_*.csv
+
+# Editors / OS
+.DS_Store
+*.swp
