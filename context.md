@@ -1,471 +1,596 @@
 # Project Context — WikiCFP Conference Scraper
 
-> Living document. Updated after every major design decision.
+> Living architecture document. Source of truth for code generation.
 > Last updated: 2026-04-25
+
+When in doubt, read this file end-to-end before writing code. Every section
+contains concrete contracts (filenames, signatures, schemas, key names) — do
+not invent alternatives.
 
 ---
 
 ## 1. Project Goal
 
-Build a fully automated pipeline that:
-1. Scrapes WikiCFP (keyword search + full A–Z series index)
-2. Follows links to official conference websites and previous-year archives
-3. Deduplicates across all sources using event ID + semantic embeddings
-4. Classifies every conference into one or more categories
-5. Generates organised Markdown reports (by category, date, region, India state-wise)
-6. Refreshes automatically so past conferences move out of the upcoming section
+Fully automated pipeline that:
+
+1. Scrapes WikiCFP (keyword search + full A–Z series index + journal index).
+2. Follows links to official conference websites and previous-year archives.
+3. Deduplicates across all sources using `event_id` + semantic embeddings.
+4. Classifies every conference into one or more categories (multi-label).
+5. Generates organised Markdown reports per category and region (India broken down state-wise).
+6. Refreshes on a cron so past conferences age out of the upcoming section.
+7. Builds an OWL ontology from the scraped category tags as a side product.
 
 ---
 
-## 2. Hardware
+## 2. Hardware Inventory
 
-| Machine | GPU | VRAM | Role |
-|---|---|---|---|
-| Workstation A | RTX 4090 | 24 GB | Primary inference — classification, tool calling |
-| Workstation B | RTX 3080 | 16 GB | Secondary — extraction, dedup confirmation |
-| DGX Station | ~8× A100 | 256 GB | Heavy reasoning, large-model runs, batch jobs |
+| Machine       | GPU      | VRAM   | Role                                           |
+|---------------|----------|--------|------------------------------------------------|
+| Workstation A | RTX 4090 | 24 GB  | Tier 3 reasoning + tool calling                |
+| Workstation B | RTX 3080 | 16 GB  | Tier 1 / Tier 2 inference, embeddings          |
+| DGX Station   | 8× A100  | 256 GB | Tier 4 batch reasoning, ontology inference     |
 
----
-
-## 3. Model Decisions
-
-### Tool Calling / HTML Parsing
-
-**Winner: Qwen3 (all sizes)** — only model family with fully reliable, out-of-the-box
-tool calling in Ollama as of April 2025. DeepSeek-R1 distills require custom chat
-templates (MFDoom variant). Mistral-NeMo is trained for tools but has OpenAI-format
-inconsistencies in Ollama's API layer. Phi-4-reasoning does NOT support tool calling.
-
-### Hardware → Model Assignment
-
-| Task | Model | Runs on | Why |
-|---|---|---|---|
-| Classify category (fast) | `qwen3:8b` | RTX 3080 | Fits in 5 GB, thinking mode, tool calling |
-| Classify ambiguous / overlapping | `qwen3:32b` | RTX 4090 | 32B reasoning catches edge cases |
-| Extract fields from short CFP pages | `qwen3:14b` | RTX 3080 | 32k ctx sufficient, tool calling |
-| Extract fields from long CFP pages | `mistral-nemo:12b` | RTX 3080 | 128k context, handles full HTML dumps |
-| Dedup confirmation (pair reasoning) | `deepseek-r1:32b` | RTX 4090 | Best pure reasoning for yes/no dedup |
-| Complex multi-site reasoning | `qwen3:72b` | DGX | Large reasoning for unknown site layouts |
-| Batch overnight classification | `deepseek-r1:70b` | DGX | High accuracy, no time pressure |
-| Semantic candidate pairing | `nomic-embed-text` | Any CPU | 274 MB, fast cosine-sim |
-
-### Why Not Phi-4-reasoning for Tool Calling
-Phi-4-reasoning-plus explicitly does not support tool calling. Phi-4-mini does, but
-at 3.8B it lacks the semantic depth for academic domain classification. Skip it here.
-
-### Why Qwen3 over DeepSeek-R1 for Tool Calling
-DeepSeek-R1 distills need the MFDoom custom modelfile to enable tool calling — extra
-setup, not upstream-maintained. Qwen3 works out of the box with Ollama's `/api/chat`
-`tools` parameter. Use DeepSeek-R1:32B/70B on DGX for pure reasoning tasks where
-tool calling isn't needed (e.g., overnight dedup batch).
+Each machine runs its own Ollama daemon. Hosts configured in `config.py` (see §6).
 
 ---
 
-## 4. Parsing Strategy
+## 3. Model Roster (Ollama)
 
-### Rule-based (fast, no GPU)
-Use BeautifulSoup + lxml for **WikiCFP pages** — structure is consistent and known:
-- Search results: paired rows (acronym+link row, then when/where/deadline row)
-- Event detail: single TD with `When|date|Where|city|Submission Deadline|date` pattern
-- Series index: `<a href="/cfp/program?id=N&s=ACRONYM">` links per letter
+| Model              | Host     | VRAM peak | Used for                                             |
+|--------------------|----------|-----------|------------------------------------------------------|
+| `qwen3:4b`         | RTX 3080 | ~3 GB     | Tier 1 triage (real CFP? virtual? rough category?)   |
+| `qwen3:14b`        | RTX 3080 | ~10 GB    | Tier 2 structured extraction                         |
+| `qwen3:32b`        | RTX 4090 | ~22 GB    | Tier 3 ambiguous classify + tool calling on unknowns |
+| `mistral-nemo:12b` | RTX 3080 | ~9 GB     | Long-context (>32k tokens) HTML extraction           |
+| `deepseek-r1:32b`  | RTX 4090 | ~22 GB    | Dedup pair reasoning (no tool calling needed)        |
+| `deepseek-r1:70b`  | DGX      | ~80 GB    | Tier 4 overnight batch                               |
+| `nomic-embed-text` | RTX 3080 | ~300 MB   | 768-d embeddings for semantic dedup                  |
 
-### LLM Tool Calling (for unknown external sites)
-When the scraper follows a link to an external conference website (e.g. neurips.cc,
-icml.cc, acl2026.org) the page structure is unknown. Use Qwen3 with these tools:
-
-```python
-tools = [
-    extract_text(selector: str) -> str,
-    find_links(pattern: str) -> list[str],
-    get_field(label: str) -> str,          # e.g. "submission deadline"
-    is_conference_page() -> bool,
-    classify_category(text: str) -> list[str],
-    detect_virtual(text: str) -> bool,
-]
-```
-
-Qwen3:32B (RTX 4090) handles unknown sites in real-time.
-Qwen3:72B (DGX) used for batch overnight processing of complex sites.
-
-### Hybrid pipeline per URL
-```
-URL arrives in queue
-  ├── domain == wikicfp.com  →  rule-based parser  (fast, no GPU)
-  └── domain != wikicfp.com
-        ├── domain in KNOWN_PARSERS  →  dedicated parser module
-        └── domain unknown
-              ├── page < 32k tokens   →  qwen3:32b tool calling (RTX 4090)
-              └── page > 32k tokens   →  mistral-nemo:12b extraction (RTX 3080)
-```
+**Why Qwen3 for tool calling**: only family with reliable out-of-the-box tool calling in Ollama
+(April 2025). DeepSeek-R1 distills need the MFDoom modelfile; Mistral-NeMo has OpenAI-format
+inconsistencies; Phi-4-reasoning does NOT support tools. Use DeepSeek-R1 only for pure reasoning.
 
 ---
 
-## 5. Database Stack
-
-### Chosen: DuckDB + Qdrant + Redis (all self-hosted, all free)
-
-**DuckDB** — primary analytical store
-- Embedded, file-based, zero server overhead
-- Native JSON support, columnar = fast analytics queries
-- Handles Parquet for archiving
-- `pip install duckdb`
-- Schema: `events`, `series`, `scrape_queue`, `sites`
-
-**Qdrant** — vector store for semantic deduplication
-- Self-hosted via Docker: `docker run -p 6333:6333 qdrant/qdrant`
-- Stores `nomic-embed-text` embeddings of `acronym + name + when`
-- Cosine similarity threshold 0.92 → candidate duplicate pairs
-- Qwen3:32B confirms or rejects each pair
-- `pip install qdrant-client`
-
-**Redis** — scrape queue + rate limiter + seen-URL cache
-- Self-hosted: `docker run -p 6379:6379 redis:alpine`
-- Sorted set as priority queue (WikiCFP > series pages > event details > external)
-- Per-domain rate limiting: SET with TTL enforces min delay between requests
-- SETNX as seen-URL dedup (fast O(1) check before fetching)
-- `pip install redis`
-
-**Why not PostgreSQL?**
-Single-machine workflow — DuckDB + SQLite is simpler and faster for read-heavy
-analytics. Switch to PostgreSQL only if multi-machine concurrent writes are needed.
-
-**Why not ChromaDB / FAISS?**
-Qdrant has persistent storage, filtering, and payload support built-in. ChromaDB is
-in-process only. FAISS requires manual persistence. Qdrant is the right tier here.
-
-### DuckDB Schema (planned)
-
-```sql
--- Canonical event record (one row per unique WikiCFP event ID)
-CREATE TABLE events (
-    event_id        INTEGER PRIMARY KEY,   -- from wikicfp eventid=N
-    acronym         VARCHAR,
-    name            VARCHAR,
-    series_id       INTEGER,               -- FK → series
-    edition_year    INTEGER,
-    category        VARCHAR[],             -- ['AI','ML']
-    is_virtual      BOOLEAN,
-    when_raw        VARCHAR,
-    start_date      DATE,
-    end_date        DATE,
-    where_raw       VARCHAR,
-    country         VARCHAR,
-    region          VARCHAR,               -- USA/Europe/India/etc.
-    india_state     VARCHAR,
-    deadline        DATE,
-    notification    DATE,
-    camera_ready    DATE,
-    wikicfp_url     VARCHAR,
-    official_url    VARCHAR,               -- extracted from detail page
-    scraped_at      TIMESTAMP,
-    last_checked    TIMESTAMP
-);
-
--- Conference series (e.g. ICML, NeurIPS, VLSI-DAT)
-CREATE TABLE series (
-    series_id       INTEGER PRIMARY KEY,   -- from wikicfp program?id=N
-    acronym         VARCHAR,
-    full_name       VARCHAR,
-    wikicfp_url     VARCHAR
-);
-
--- External sites to scrape (found via official_url links)
-CREATE TABLE sites (
-    domain          VARCHAR PRIMARY KEY,
-    parser_type     VARCHAR,               -- 'rule-based' | 'llm-tool' | 'known'
-    last_scraped    TIMESTAMP,
-    robots_txt      VARCHAR,
-    crawl_delay_s   INTEGER DEFAULT 5,
-    notes           VARCHAR
-);
-
--- Scrape queue (mirrors Redis, persisted here for resume-after-crash)
-CREATE TABLE scrape_queue (
-    url             VARCHAR PRIMARY KEY,
-    domain          VARCHAR,
-    priority        INTEGER,               -- 1=wikicfp 2=series 3=event 4=external
-    source_event_id INTEGER,
-    added_at        TIMESTAMP,
-    attempts        INTEGER DEFAULT 0,
-    status          VARCHAR DEFAULT 'pending'  -- pending/done/failed
-);
-```
-
----
-
-## 6. Scraping Architecture
-
-### Three-tier source hierarchy
-
-```
-Tier 1 — WikiCFP keyword search
-  ?conference=<keyword>&page=N
-  Discovers event IDs + basic fields
-
-Tier 2 — WikiCFP series index (A–Z)
-  /cfp/series?t=c&i=A  through  Z
-  Discovers ALL known conference series → program pages
-  /cfp/program?id=N  lists every edition (year) of a series
-  → feeds Tier 1 event detail pages
-
-Tier 3 — External conference websites
-  official_url extracted from each event detail page
-  Scraped separately, domain-isolated, LLM-assisted
-```
-
-### Previous-years handling
-WikiCFP series program pages (`/cfp/program?id=N&s=ACRONYM`) list every historical
-edition of a conference. The scraper:
-1. Fetches every program page discovered via series index
-2. Collects ALL edition links (not just current year)
-3. Stores each edition as a separate event row with `edition_year`
-4. External conference websites: detect `/2024/`, `/2023/` archive subpages and
-   queue them as separate scrape jobs with lower priority (priority=5)
-
-### Human-like crawl timing
-```python
-import random, time
-
-def human_delay(min_s=5, max_s=15):
-    # Gaussian around 8s, clamped to [min_s, max_s]
-    delay = random.gauss(8, 2.5)
-    delay = max(min_s, min(max_s, delay))
-    # 1-in-10 chance of a "reading pause" (15–45s)
-    if random.random() < 0.1:
-        delay = random.uniform(15, 45)
-    time.sleep(delay)
-```
-
-### Per-domain isolation
-Each external domain runs in its own scrape session:
-- Separate Redis rate-limit key per domain
-- Separate DuckDB `sites` row tracking crawl_delay and robots.txt
-- Never mix domains in the same worker to avoid cross-site rate interference
-- Unknown domains default to 10s delay until robots.txt is checked
-
-### Queue priority
-```
-1  WikiCFP search result pages     (discovery)
-2  WikiCFP series/program pages    (historical edition links)
-3  WikiCFP event detail pages      (official URL + full fields)
-4  External conference websites    (current year)
-5  External conference archives    (previous years)
-```
-
----
-
-## 7. Multi-site LLM Workflow
-
-```
-for each external URL dequeued:
-  1. Fetch HTML (rule-based requests + human delay)
-  2. Check domain in KNOWN_PARSERS → use dedicated module if yes
-  3. Else: token count HTML
-     a. < 32k tokens  → qwen3:32b with tool calling (RTX 4090, real-time)
-     b. > 32k tokens  → mistral-nemo:12b full-context dump (RTX 3080)
-     c. overnight batch → queue for qwen3:72b on DGX
-  4. Tools called by model:
-       extract_field("submission deadline")
-       extract_field("conference dates")
-       extract_field("location")
-       detect_virtual()
-       find_archive_links()     ← discovers /2024/, /2023/ subpages
-       classify_category()
-  5. Merge extracted fields into DuckDB events row
-  6. Any new archive links → add to queue at priority 5
-```
-
----
-
-## 8. Deduplication Strategy
-
-```
-Step 1 — Hard dedup: event_id (WikiCFP eventid=N is unique per edition)
-Step 2 — Cross-source soft dedup:
-  a. Generate embedding: nomic-embed-text(acronym + name + start_date)
-  b. Qdrant ANN search: top-5 candidates within cosine distance 0.08
-  c. For each candidate pair → deepseek-r1:32b (RTX 4090):
-       "Are these the same conference edition? [A] [B] → YES/NO + reason"
-  d. YES → merge records, keep richer field set, mark duplicate
-```
-
----
-
-## 9. Report Generation (existing)
-
-Runs after every scrape. `generate_md.py` reads `data/latest.json` and writes:
-- `reports/ai.md`, `ml.md`, `devops.md`, `linux.md`, `chipdesign.md`, `math.md`, `legal.md`
-- `reports/by_date.md` — all conferences sorted by start date
-- `reports/usa.md`, `europe.md`, `uk.md`, `singapore.md`, `switzerland.md`
-- `reports/india.md` — state-wise (city → state mapping for 80+ cities)
-- Each report: Upcoming section (soonest first) + Past section (most-recent first)
-- Past/upcoming split is live — recalculated on every run against today's date
-
----
-
-## 10. File Structure
+## 4. Module Layout
 
 ```
 wiki-cfp/
-├── scraper.py          # WikiCFP search + series scraper (to be rewritten)
-├── generate_md.py      # Markdown report generator
-├── prompts.md          # All search queries, keywords, series index URLs
-├── context.md          # This file — architecture decisions + discussions
+├── config.py                   # constants, hosts, paths, thresholds
+├── prompts.md                  # data: categories, keywords, URLs, parsers, LLM prompts
+├── context.md                  # this file
+├── docker-compose.yml          # Qdrant + Redis
 ├── requirements.txt
-├── setup.sh            # One-command environment setup
+├── wcfp/
+│   ├── __init__.py
+│   ├── models.py               # dataclasses: Event, Series, ScrapeJob, TierResult,
+│   │                           #   EscalationPayload, OntologyEdge + Category/Tier/JobStatus enums
+│   ├── prompts_parser.py       # parse_prompts_md(path) -> ParsedPrompts
+│   ├── db.py                   # DuckDB: get_conn, init_schema, upsert_event, iter_events
+│   ├── queue.py                # Redis: priority queue, rate limiter, seen-URL cache
+│   ├── vectors.py              # Qdrant: ensure_collection, upsert_event_vector, search_similar
+│   ├── embed.py                # nomic-embed-text via Ollama -> list[float]
+│   ├── fetch.py                # requests session, robots.txt, human_delay, with_retry
+│   ├── parsers/
+│   │   ├── __init__.py         # KNOWN_PARSERS dict, dispatch(domain, html)
+│   │   ├── wikicfp.py          # parse_search_results, parse_event_detail, parse_series_index
+│   │   ├── ieee.py             # parse(html) -> Event
+│   │   ├── acm.py              # parse(html) -> Event
+│   │   ├── springer.py         # parse(html) -> Event
+│   │   └── usenix.py           # parse(html) -> Event
+│   ├── llm/
+│   │   ├── __init__.py
+│   │   ├── client.py           # OllamaClient with chat() and chat_with_tools()
+│   │   ├── tools.py            # TOOLS list (JSON schema) + closure-bound implementations
+│   │   ├── tier1.py            # run_tier1(event: Event) -> TierResult
+│   │   ├── tier2.py            # run_tier2(event: Event) -> TierResult
+│   │   ├── tier3.py            # run_tier3(event: Event, html: str | None) -> TierResult
+│   │   └── tier4.py            # run_tier4_batch(payloads: list[EscalationPayload]) -> list[TierResult]
+│   ├── dedup.py                # candidate_pairs(event) + confirm_pair(a,b) via deepseek-r1:32b
+│   ├── ontology.py             # owlready2 + rdflib: build_ontology() -> onto
+│   ├── pipeline.py             # orchestrator: dequeue -> fetch -> parse -> tiers -> persist
+│   └── cli.py                  # python -m wcfp <command>
+├── generate_md.py              # reads DuckDB, writes reports/*.md
+├── reports/
 ├── data/
-│   ├── latest.json     # Always current full dataset
-│   ├── events_cache/   # Per event_id JSON cache (avoid re-fetching)
-│   └── conferences_YYYYMMDD_HHMMSS.{json,csv}
-├── reports/            # Auto-generated Markdown reports
-│   ├── ai.md
-│   ├── ml.md
-│   ├── by_date.md
-│   ├── india.md
-│   └── ...
-└── db/
-    └── wikicfp.duckdb  # Primary analytical store
+│   ├── wikicfp.duckdb
+│   └── archive/                # Parquet snapshots
+└── ontology/
+    ├── conference_domain.owl
+    ├── concepts.json
+    ├── edges.json
+    └── by_conference.json
 ```
+
+**Import graph (no cycles):**
+```
+cli -> pipeline -> fetch, queue, parsers/*, llm/tier*, db, vectors, dedup
+llm/tier* -> llm/client, llm/tools, prompts_parser, models, config
+parsers/* -> models, config
+db, queue, vectors, embed -> models, config
+ontology -> db, models, config
+generate_md -> db, models, config
+```
+`models.py` and `config.py` import nothing project-internal.
 
 ---
 
-## 11. Key Decisions Log
+## 5. Data Models (`wcfp/models.py`)
 
-| Date | Decision | Reason |
-|---|---|---|
-| 2026-04-25 | Python + requests + BS4 for scraper | No API exists; HTML scraping only option |
-| 2026-04-25 | 5s+ human-like random delays | WikiCFP community guideline; avoid bans |
-| 2026-04-25 | Event ID as primary dedup key | WikiCFP eventid=N is globally unique per edition |
-| 2026-04-25 | Qwen3 for tool calling | Only local model with reliable Ollama tool-call support |
-| 2026-04-25 | DeepSeek-R1 for pure reasoning (no tool call) | Best reasoning accuracy; use on DGX for batch |
-| 2026-04-25 | DuckDB over PostgreSQL | Single-machine, read-heavy analytics, zero server overhead |
-| 2026-04-25 | Qdrant for vectors | Persistent, filterable, better than Chroma/FAISS for this scale |
-| 2026-04-25 | Redis for queue + rate limiting | Per-domain TTL-based rate limiting is native to Redis |
-| 2026-04-25 | Series index A–Z in prompts.md | Comprehensive coverage beyond keyword search |
-| 2026-04-25 | Mistral-NeMo:12b for long pages | 128k context; others truncate at 32k |
-| 2026-04-25 | india.md state-wise with 80+ city map | User requirement; city→state lookup table |
-| 2026-04-25 | Tiered model pipeline (small→medium→large) | Economical: most records resolved by cheap models; only hard cases reach DGX |
-| 2026-04-25 | Ontology as learning exercise on this repo | Build ConferenceDomain OWL ontology from WikiCFP category tags using owlready2 + rdflib |
-
----
-
-## 12. Tiered Curation Pipeline
-
-The key insight: **route by confidence, not by task type.** A small model that is
-sure is better than a large model for obvious cases.
-
-```
-Raw scraped records
-        │
-        ▼
-┌───────────────────────────────────────────────────────────┐
-│ TIER 1 — qwen3:4b on RTX 3080 (~200 rec/min)             │
-│  • Is this a real CFP? (discard spam/journals)            │
-│  • Does it touch any target category?                     │
-│  • Is it virtual?                                         │
-│  Confidence ≥ 0.85 → write to DuckDB, done               │
-│  Confidence < 0.85 → ESCALATE to Tier 2                  │
-└───────────────┬───────────────────────────────────────────┘
-                │ ~20% of records
-                ▼
-┌───────────────────────────────────────────────────────────┐
-│ TIER 2 — qwen3:14b on RTX 3080                           │
-│  • Multi-label classification                             │
-│  • Structured field extraction                            │
-│  • Find archive links in external pages                   │
-│  Confidence ≥ 0.85 → done                                │
-│  Confidence < 0.85 → ESCALATE to Tier 3                  │
-└───────────────┬───────────────────────────────────────────┘
-                │ ~5% of records
-                ▼
-┌───────────────────────────────────────────────────────────┐
-│ TIER 3 — qwen3:32b on RTX 4090 (tool calling)            │
-│  • Overlapping/ambiguous categories                       │
-│  • Unknown external site layouts via tool calling         │
-│  • Dedup pair confirmation                                │
-│  Confidence ≥ 0.80 → done                                │
-│  Confidence < 0.80 → ESCALATE to Tier 4 (batch)          │
-└───────────────┬───────────────────────────────────────────┘
-                │ ~1% of records
-                ▼
-┌───────────────────────────────────────────────────────────┐
-│ TIER 4 — deepseek-r1:70b on DGX (overnight batch)        │
-│  • Hardest dedup cases                                    │
-│  • Ontology edge inference                                │
-│  • Cross-domain relationship detection                    │
-│  Always produces a final answer                           │
-└───────────────────────────────────────────────────────────┘
-```
-
-Escalation payload between tiers:
-```json
-{
-  "record": { ...event fields... },
-  "tier1_result": { "categories": ["AI"], "confidence": 0.71 },
-  "escalate_reason": "low_confidence | multi_category | unknown_site | dedup_ambiguous"
-}
-```
-
----
-
-## 13. Ontology Learning (using this repo as exercise)
-
-This project is a natural sandbox for **ontology engineering** because WikiCFP
-already provides raw material: conference names, acronyms, category tags, and
-co-occurrence patterns across thousands of editions.
-
-### What is an ontology?
-A formal representation of concepts (classes), instances, and relationships:
-- **is-a**: DeepLearning is-a MachineLearning
-- **part-of**: NLP is-part-of AI
-- **related-to**: FPGA related-to EDA
-- **disjoint**: Virtual disjoint-with Physical
-
-### Learning path using this repo
-
-**Step 1 — Concept extraction (Tier 1–2)**
-WikiCFP event pages have a `Categories` field with free-text tags
-(e.g. "machine learning", "neural networks", "pattern recognition").
-Collect all tags → raw concept candidates.
-
-**Step 2 — Synonym grouping (Tier 2, Qdrant)**
-Use `nomic-embed-text` embeddings to cluster synonymous tags:
-`["ML", "machine learning", "statistical learning"]` → single concept `MachineLearning`
-
-**Step 3 — Hierarchy inference (Tier 3)**
-From co-occurrence: conferences tagged both "deep learning" AND "machine learning"
-suggest is-a. Qwen3:32b confirms: "Is DeepLearning a subtype of MachineLearning?"
-
-**Step 4 — OWL serialisation**
 ```python
-from owlready2 import *
-onto = get_ontology("http://wikicfp.org/conference_domain.owl")
-with onto:
-    class ResearchField(Thing): pass
-    class MachineLearning(ResearchField): pass
-    class DeepLearning(MachineLearning): pass   # is-a
+from __future__ import annotations
+from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
+from enum import Enum
+from typing import Optional
+
+
+class Category(str, Enum):
+    AI               = "AI"
+    ML               = "ML"
+    DEVOPS           = "DevOps"
+    LINUX            = "Linux"
+    CHIP_DESIGN      = "ChipDesign"
+    MATH             = "Math"
+    LEGAL            = "Legal"
+    COMPUTER_SCIENCE = "ComputerScience"
+    SECURITY         = "Security"
+    DATA             = "Data"
+    NETWORKING       = "Networking"
+    ROBOTICS         = "Robotics"
+    BIOINFORMATICS   = "Bioinformatics"
+
+
+class Tier(int, Enum):
+    T1 = 1; T2 = 2; T3 = 3; T4 = 4
+
+
+class JobStatus(str, Enum):
+    PENDING = "pending"; IN_FLIGHT = "in_flight"; DONE = "done"
+    FAILED  = "failed";  DEAD      = "dead"
+
+
+@dataclass(slots=True)
+class Event:
+    event_id:     int                         # WikiCFP eventid=N — primary key
+    acronym:      str
+    name:         str
+    series_id:    Optional[int]  = None
+    edition_year: Optional[int]  = None
+    categories:   list[Category] = field(default_factory=list)
+    is_virtual:   bool           = False
+    when_raw:     Optional[str]  = None
+    start_date:   Optional[date] = None
+    end_date:     Optional[date] = None
+    where_raw:    Optional[str]  = None
+    country:      Optional[str]  = None       # ISO-3166 alpha-2 e.g. "IN","US"
+    region:       Optional[str]  = None       # "Asia"|"Europe"|"NorthAmerica"|etc.
+    india_state:  Optional[str]  = None       # only when country == "IN"
+    deadline:     Optional[date] = None
+    notification: Optional[date] = None
+    camera_ready: Optional[date] = None
+    wikicfp_url:  Optional[str]  = None
+    official_url: Optional[str]  = None
+    raw_tags:     list[str]      = field(default_factory=list)
+    scraped_at:   datetime       = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_checked: datetime       = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(slots=True)
+class Series:
+    series_id: int; acronym: str
+    full_name: Optional[str] = None; wikicfp_url: Optional[str] = None
+
+
+@dataclass(slots=True)
+class ScrapeJob:
+    url: str; domain: str
+    priority: int          # 1=wikicfp search, 2=series, 3=event, 4=ext-current, 5=ext-archive
+    source_event_id: Optional[int] = None
+    attempts: int = 0; status: JobStatus = JobStatus.PENDING
+    added_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    last_error: Optional[str] = None
+
+
+@dataclass(slots=True)
+class TierResult:
+    tier: Tier; model: str; confidence: float; output: dict
+    escalate: bool = False
+    escalate_reason: Optional[str] = None
+    # values: "low_confidence"|"multi_category"|"unknown_site"|
+    #         "long_context"|"dedup_ambiguous"|"ontology_edge"
+    elapsed_ms: int = 0
+
+
+@dataclass(slots=True)
+class EscalationPayload:
+    record: dict; tier_results: list[TierResult]; escalate_reason: str
+    raw_html: Optional[str] = None   # only when escalate_reason == "unknown_site"
+
+
+@dataclass(slots=True)
+class OntologyEdge:
+    subject: str; predicate: str; object: str; confidence: float
+    # predicate: "is_a"|"part_of"|"related_to"|"synonym_of"
+    source_event_id: Optional[int] = None
 ```
 
-**Step 5 — Validation + visualisation**
-Open `conference_domain.owl` in Protégé (free GUI) to inspect and edit the
-hierarchy. Run a reasoner (HermiT) to check consistency.
+---
 
-**Step 6 — Use ontology for smarter classification**
-Instead of flat keyword lists, classify new conferences against the OWL hierarchy.
-A conference tagged "transformer architecture" → infer DeepLearning → ML → AI
-without explicit keyword rules.
+## 6. Configuration (`config.py`)
 
-### Tools to install
+```python
+from pathlib import Path
+import os
+
+ROOT = Path(__file__).parent
+DATA_DIR = ROOT / "data"; REPORTS_DIR = ROOT / "reports"
+ONTOLOGY_DIR = ROOT / "ontology"; DUCKDB_PATH = DATA_DIR / "wikicfp.duckdb"
+
+OLLAMA_HOSTS = {
+    "rtx4090": os.getenv("OLLAMA_RTX4090", "http://10.0.0.10:11434"),
+    "rtx3080": os.getenv("OLLAMA_RTX3080", "http://10.0.0.11:11434"),
+    "dgx":     os.getenv("OLLAMA_DGX",     "http://10.0.0.12:11434"),
+}
+
+MODEL_HOST = {
+    "qwen3:4b": "rtx3080", "qwen3:14b": "rtx3080",
+    "mistral-nemo:12b": "rtx3080", "nomic-embed-text": "rtx3080",
+    "qwen3:32b": "rtx4090", "deepseek-r1:32b": "rtx4090",
+    "deepseek-r1:70b": "dgx",
+}
+
+TIER_THRESHOLD  = {1: 0.85, 2: 0.85, 3: 0.80}
+LONG_CONTEXT_TOKENS = 32_000        # tiktoken cl100k_base
+
+REDIS_URL   = os.getenv("REDIS_URL",  "redis://localhost:6379/0")
+QDRANT_URL  = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION = "wikicfp_events"
+EMBED_DIM   = 768
+
+DEDUP_COSINE_THRESHOLD = 0.92; DEDUP_TOP_K = 5
+
+USER_AGENT            = "wiki-cfp-scraper/1.0 (+contact@example.com)"
+HUMAN_DELAY_MEAN      = 8.0;  HUMAN_DELAY_STD  = 2.5
+HUMAN_DELAY_MIN       = 5.0;  HUMAN_DELAY_MAX  = 15.0
+HUMAN_DELAY_LONG_PROB = 0.10  # 10% chance of 15-45s "reading" pause
+
+MAX_RETRIES = 5; RETRY_BACKOFF_BASE = 2.0; RETRY_BACKOFF_CAP = 600
+DEAD_LETTER_KEY = "wcfp:dead"
+PROMPTS_FILE = ROOT / "prompts.md"
+```
+
+---
+
+## 7. Storage
+
+### 7.1 DuckDB schema (`wcfp/db.py`)
+
+Public API: `get_conn()`, `init_schema(conn)`, `upsert_event(conn, Event)`,
+`upsert_series(conn, Series)`, `iter_events(conn, where=None) -> Iterator[Event]`.
+
+```sql
+CREATE TABLE IF NOT EXISTS events (
+    event_id INTEGER PRIMARY KEY, acronym VARCHAR, name VARCHAR,
+    series_id INTEGER, edition_year INTEGER, categories VARCHAR[],
+    is_virtual BOOLEAN, when_raw VARCHAR, start_date DATE, end_date DATE,
+    where_raw VARCHAR, country VARCHAR, region VARCHAR, india_state VARCHAR,
+    deadline DATE, notification DATE, camera_ready DATE,
+    wikicfp_url VARCHAR, official_url VARCHAR, raw_tags VARCHAR[],
+    scraped_at TIMESTAMP, last_checked TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS series (
+    series_id INTEGER PRIMARY KEY, acronym VARCHAR,
+    full_name VARCHAR, wikicfp_url VARCHAR
+);
+CREATE TABLE IF NOT EXISTS sites (
+    domain VARCHAR PRIMARY KEY, parser_type VARCHAR,
+    last_scraped TIMESTAMP, robots_txt VARCHAR,
+    crawl_delay_s INTEGER DEFAULT 5, notes VARCHAR
+);
+CREATE TABLE IF NOT EXISTS tier_runs (
+    event_id INTEGER, tier INTEGER, model VARCHAR, confidence DOUBLE,
+    output_json VARCHAR, escalate BOOLEAN, escalate_reason VARCHAR,
+    elapsed_ms INTEGER, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (event_id, tier, ts)
+);
+CREATE INDEX IF NOT EXISTS idx_events_country  ON events(country);
+CREATE INDEX IF NOT EXISTS idx_events_state    ON events(india_state);
+CREATE INDEX IF NOT EXISTS idx_events_start    ON events(start_date);
+CREATE INDEX IF NOT EXISTS idx_events_deadline ON events(deadline);
+```
+
+Upserts: `INSERT OR REPLACE` / `ON CONFLICT (event_id) DO UPDATE SET ...`
+
+### 7.2 Qdrant (`wcfp/vectors.py`)
+
+Collection: `wikicfp_events`, vectors: size=768, distance=COSINE.
+Embedding text: `f"{acronym} {name} {start_date or ''}".lower()`.
+
+```python
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+# ensure_collection / upsert_event_vector / search_similar
+# — see §4 for full signatures
+```
+
+### 7.3 Redis key schema (`wcfp/queue.py`)
+
+| Key pattern                 | Type       | TTL           | Purpose                                  |
+|-----------------------------|------------|---------------|------------------------------------------|
+| `wcfp:queue`                | sorted set | none          | priority queue (score = priority*1e10+ms)|
+| `wcfp:inflight:{job_id}`    | string     | 600 s         | in-flight lease; expiry = re-enqueue     |
+| `wcfp:seen:{sha1(url)}`     | string "1" | 30 days       | SETNX before enqueue                     |
+| `wcfp:rate:{domain}`        | string "1" | crawl_delay_s | SETNX rate limiter                       |
+| `wcfp:robots:{domain}`      | string     | 1 day         | cached robots.txt                        |
+| `wcfp:dead`                 | list       | none          | RPUSH after MAX_RETRIES                  |
+| `wcfp:metrics:tier{N}`      | hash       | none          | ok / escalated / failed counters         |
+| `wcfp:cursor:{source}`      | string     | none          | resume cursor per source                 |
+
+---
+
+## 8. Ollama tool calling (`wcfp/llm/client.py`)
+
+`pip install ollama`. Routes via `MODEL_HOST[model] -> OLLAMA_HOSTS[host]`.
+
+```python
+from ollama import Client
+from config import OLLAMA_HOSTS, MODEL_HOST
+import json
+from typing import Any, Callable, Optional
+
+class OllamaClient:
+    def __init__(self):
+        self._clients = {n: Client(host=u, timeout=300)
+                         for n, u in OLLAMA_HOSTS.items()}
+
+    def _client_for(self, model: str) -> Client:
+        return self._clients[MODEL_HOST[model]]
+
+    def chat(self, model, messages, tools=None, format=None, options=None) -> dict:
+        kw: dict[str, Any] = {"model": model, "messages": messages}
+        if tools:   kw["tools"]   = tools
+        if format:  kw["format"]  = format
+        if options: kw["options"] = options
+        return self._client_for(model).chat(**kw)
+
+    def chat_with_tools(self, model: str, system: str, user: str,
+                        tools: list[dict],
+                        tool_impls: dict[str, Callable[..., Any]],
+                        max_iters: int = 6) -> dict:
+        messages = [{"role": "system", "content": system},
+                    {"role": "user",   "content": user}]
+        for _ in range(max_iters):
+            resp  = self.chat(model=model, messages=messages, tools=tools)
+            msg   = resp["message"]
+            messages.append(msg)
+            calls = msg.get("tool_calls") or []
+            if not calls:
+                return resp
+            for call in calls:
+                name = call["function"]["name"]
+                args = call["function"]["arguments"]
+                if isinstance(args, str): args = json.loads(args)
+                try:    result = tool_impls[name](**args)
+                except Exception as e: result = {"error": repr(e)}
+                messages.append({"role": "tool", "name": name,
+                                  "content": json.dumps(result, default=str)})
+        raise RuntimeError(f"tool loop exceeded {max_iters} iterations")
+```
+
+Tools schema in `wcfp/llm/tools.py` — `TOOLS` list with:
+`extract_text(selector)`, `find_links(pattern)`, `get_field(label)`,
+`is_conference_page()`, `classify_category(text)`, `detect_virtual(text)`.
+
+---
+
+## 9. Parsing strategy
+
+**Rule-based** (no GPU): `wcfp/parsers/wikicfp.py`
+- `parse_search_results(html) -> list[Event]` — paired TR rows.
+- `parse_event_detail(html) -> Event` — TD: `When|date|Where|city|Submission Deadline|date`.
+- `parse_series_index(html) -> list[Series]` — `<a href="/cfp/program?id=N&s=ACRONYM">`.
+
+**Hybrid dispatch per URL:**
+```
+domain in KNOWN_PARSERS              → rule-based (no GPU)
+unknown domain:
+  tiktoken(html) <= 32_000           → qwen3:32b + tools  (RTX 4090)
+  tiktoken(html)  > 32_000           → mistral-nemo:12b   (RTX 3080)
+  still unresolved after tier 3      → DGX overnight queue
+```
+
+Additional `PARSER:` lines in `prompts.md` extend `KNOWN_PARSERS` at startup.
+
+---
+
+## 10. Tiered curation
+
+```
+Raw records
+    │
+    ▼ TIER 1  qwen3:4b  RTX 3080  ~200 rec/min
+  Output JSON: {is_cfp, categories:[str], is_virtual, confidence}
+  conf >= 0.85 → DuckDB. conf < 0.85 → escalate
+    │ ~20%
+    ▼ TIER 2  qwen3:14b  RTX 3080
+  Output JSON: full Event-shaped dict + confidence
+  conf >= 0.85 → DuckDB. conf < 0.85 → escalate
+    │ ~5%
+    ▼ TIER 3  qwen3:32b  RTX 4090  (tool calling for unknown_site)
+  Output JSON: Event + archive_urls + tool_trace + confidence
+  conf >= 0.80 → DuckDB. conf < 0.80 → escalate
+    │ ~1%
+    ▼ TIER 4  deepseek-r1:70b  DGX  (overnight — no tool calling)
+  Output JSON: final Event + ontology:[OntologyEdge] + dedup:{same,reason}
+  Always final.
+```
+
+Escalation JSON between tiers:
+```json
+{"record": {...}, "tier_results": [...],
+ "escalate_reason": "low_confidence|multi_category|unknown_site|long_context|dedup_ambiguous|ontology_edge",
+ "raw_html": "...only for unknown_site..."}
+```
+
+Prompts live in `prompts.md` as `PROMPT_TIER1`…`PROMPT_TIER4`.
+
+---
+
+## 11. Deduplication
+
+```python
+# wcfp/dedup.py
+def candidate_pairs(event): ...   # embed -> Qdrant ANN -> filter by DEDUP_COSINE_THRESHOLD
+def confirm_pair(a, b) -> bool:   # deepseek-r1:32b, format="json", returns {"same": bool}
+```
+
+---
+
+## 12. Error handling (`wcfp/fetch.py`)
+
+```python
+def with_retry(fn, *args, job: ScrapeJob, **kw):
+    for attempt in range(1, MAX_RETRIES + 1):
+        try: return fn(*args, **kw)
+        except RetryableError as e:
+            if attempt >= MAX_RETRIES:
+                redis.rpush(DEAD_LETTER_KEY, json.dumps(asdict(job), default=str))
+                job.status = JobStatus.DEAD; raise
+            time.sleep(min(RETRY_BACKOFF_CAP, RETRY_BACKOFF_BASE**attempt) + random.random())
+        except FatalError:
+            redis.rpush(DEAD_LETTER_KEY, json.dumps(asdict(job), default=str))
+            job.status = JobStatus.DEAD; raise
+```
+
+- `RetryableError`: HTTP 429/5xx, timeout, LLM JSON decode error.
+- `FatalError`: HTTP 404/410, robots.txt disallow, parser hard-reject.
+
+---
+
+## 13. `prompts.md` parser spec (`wcfp/prompts_parser.py`)
+
+Accepted line types (anything else raises `ValueError` with line number):
+```
+# / blank / ## heading   → ignored
+CATEGORY: <enum value>   → opens category block
+KEYWORD:  <query text>   → belongs to current CATEGORY
+URL:      <http://...>   → belongs to current CATEGORY or INDEX block
+INDEX_SERIES:  <A-Z>     → opens series-index block; next URL closes it
+INDEX_JOURNAL: <A-Z>     → opens journal-index block; next URL closes it
+PARSER: <domain> -> <module.path>
+PROMPT_TIER1: |          → multi-line body, 2-space indent, ends at next key or EOF
+PROMPT_TIER2..4: |
+PROMPT_DEDUP: |
+PROMPT_ONTOLOGY_SYNONYM: |
+PROMPT_ONTOLOGY_ISA: |
+```
+
+Returns `ParsedPrompts(categories, indexes, parsers, prompts)`.
+Full reference implementation: see `wcfp/prompts_parser.py` in repo.
+
+---
+
+## 14. `generate_md.py` upgrade path
+
+1. Replace JSON load → `duckdb.connect(DUCKDB_PATH, read_only=True)` query.
+2. Use SQL GROUP BY for country, india_state aggregations.
+3. Emit: `reports/<category>.md`, `reports/by_date.md`, `reports/by_deadline.md`,
+   `reports/regions/<country>.md`, `reports/india/<state>.md`.
+4. Each row links to both `wikicfp_url` and `official_url`.
+5. Keep `generate_all(out_dir: Path)` signature unchanged.
+
+---
+
+## 15. Ontology learning (`wcfp/ontology.py`)
+
+`owlready2>=0.46` + `rdflib>=7.0` installed ✓. Visualise in Protégé (free, Java).
+
+**Hierarchy root**: `ConferenceDomain`
+```
+ConferenceDomain
+├── ResearchField
+│   ├── AI -> MachineLearning (DeepLearning, RL, NLP), ComputerVision
+│   ├── Systems -> OperatingSystems(Linux), DevOps, Networking
+│   ├── HardwareDesign(ChipDesign) -> VLSI, EDA, FPGA
+│   ├── Mathematics, Legal
+├── ConferenceType { Conference, Workshop, Symposium, Journal }
+├── Organization   { IEEE, ACM, Springer, USENIX, Independent }
+└── Location -> Virtual | Physical -> Country -> Region -> City
+                                      India    -> State  -> City
+```
+
+Tier responsibilities: T1=extract raw_tags, T2=synonym clustering, T3=is_a inference, T4=validate+new branches.
+Prompts: `PROMPT_ONTOLOGY_SYNONYM`, `PROMPT_ONTOLOGY_ISA` in `prompts.md`.
+Outputs: `ontology/{conference_domain.owl, concepts.json, edges.json, by_conference.json}`.
+
+---
+
+## 16. Installation
+
+`requirements.txt`:
+```
+duckdb>=1.0   qdrant-client>=1.9   redis>=5.0    ollama>=0.3
+beautifulsoup4>=4.12   lxml>=5.0   requests>=2.32
+owlready2>=0.46   rdflib>=7.0   tiktoken>=0.7
+```
+
+`docker-compose.yml` (Qdrant + Redis):
+```yaml
+version: "3.9"
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    ports: ["6333:6333","6334:6334"]
+    volumes: ["./data/qdrant:/qdrant/storage"]
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server","--appendonly","yes"]
+    ports: ["6379:6379"]
+    volumes: ["./data/redis:/data"]
+    restart: unless-stopped
+```
+
 ```bash
-pip install owlready2 rdflib
-# Protégé: https://protege.stanford.edu (Java GUI, free)
+docker compose up -d
+python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+python -m wcfp.cli init-db && python -m wcfp.cli enqueue-seeds && python -m wcfp.cli run-pipeline
 ```
 
-### Ontology output files (planned)
-```
-ontology/
-  conference_domain.owl     # Full OWL ontology
-  concepts.json             # Flat concept list with synonyms and embeddings
-  edges.json                # is-a / part-of / related-to triples
-  by_conference.json        # Per-conference ontology tag set
-```
+---
+
+## 17. CLI (`python -m wcfp <command>`)
+
+| Command            | Action                                                       |
+|--------------------|--------------------------------------------------------------|
+| `init-db`          | Create DuckDB schema + Qdrant collection                     |
+| `enqueue-seeds`    | Parse `prompts.md`, push all search/index URLs to Redis      |
+| `run-pipeline`     | Long-running worker: dequeue->fetch->parse->tiers->save      |
+| `tier4-batch`      | Drain `wcfp:dead`; run deepseek-r1:70b on DGX overnight      |
+| `dedup-sweep`      | Rebuild Qdrant vectors; run pairwise dedup                   |
+| `build-ontology`   | Emit OWL + JSON to `ontology/`                               |
+| `generate-reports` | Run `generate_md.generate_all(REPORTS_DIR)`                  |
+| `replay-dead`      | Pop N items from `wcfp:dead` and re-enqueue                  |
+
+---
+
+## 18. Key Decisions Log
+
+| Date       | Decision                               | Reason                                                        |
+|------------|----------------------------------------|---------------------------------------------------------------|
+| 2026-04-25 | Python + requests + BS4                | No WikiCFP API exists                                         |
+| 2026-04-25 | 5s+ human-like random delays           | WikiCFP guideline; avoid rate-bans                            |
+| 2026-04-25 | event_id as primary dedup key          | WikiCFP eventid=N is globally unique per edition              |
+| 2026-04-25 | Qwen3 for all tool calling             | Only local family with reliable Ollama tool-call support      |
+| 2026-04-25 | DeepSeek-R1 for pure reasoning         | Best accuracy; no tool-call overhead for yes/no dedup         |
+| 2026-04-25 | DuckDB over PostgreSQL                 | Single-machine, read-heavy, zero server overhead              |
+| 2026-04-25 | Qdrant for vectors                     | Persistent, filterable; better than ChromaDB/FAISS here       |
+| 2026-04-25 | Redis sorted set for queue             | Priority + per-domain TTL rate limiting is native             |
+| 2026-04-25 | Series A–Z index in prompts.md         | Covers ~3000+ known conference series                         |
+| 2026-04-25 | mistral-nemo:12b for long pages        | 128k context; others truncate at 32k                          |
+| 2026-04-25 | india.md state-wise, 80+ city map      | User requirement                                              |
+| 2026-04-25 | 4-tier pipeline (4b->14b->32b->70b)   | ~80% resolved cheaply; DGX for the hard 1%                   |
+| 2026-04-25 | owlready2 + rdflib for ontology        | Standard toolchain; Protégé-compatible OWL                    |
+| 2026-04-25 | tiktoken for token-count routing       | Fast, accurate, no GPU                                        |
