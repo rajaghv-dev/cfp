@@ -359,5 +359,109 @@ URL: http://www.wikicfp.com/cfp/series?t=j&i=Z
 
 ---
 
+# ─── MODEL ROUTING — TIERED CURATION PIPELINE ────────────────────────────────
+#
+# Small models do cheap, high-volume tasks first and gate work upward.
+# Only records that need deeper reasoning reach larger models.
+# See context.md §6 for full architecture.
+#
+# TIER 1  qwen3:4b / RTX 3080          — bulk triage (fits ~200 recs/min)
+#   - Is this a real conference CFP or spam/journal/workshop-only?
+#   - Does it belong to any target category? (yes/no per category)
+#   - Is it virtual/online?
+#   Outputs: keep | discard | escalate_to_tier2
+#
+# TIER 2  qwen3:14b / RTX 3080         — structured extraction
+#   - Extract: acronym, full name, dates, location, deadline, official URL
+#   - Classify into specific categories (multi-label)
+#   - Find archive links (/2024/, /2023/) in external pages
+#   Outputs: structured JSON record | escalate_to_tier3
+#
+# TIER 3  qwen3:32b / RTX 4090         — ambiguous cases + tool calling
+#   - Overlapping categories (e.g. "hardware security" → ChipDesign+Security)
+#   - Unknown external site layouts → tool-calling extraction
+#   - Soft dedup confirmation for candidate pairs
+#   Outputs: final classified record | escalate_to_tier4
+#
+# TIER 4  deepseek-r1:70b / DGX        — complex reasoning (overnight batch)
+#   - Multi-paper CFPs with vague scope
+#   - Dedup across radically different spellings / language variants
+#   - Ontology relationship inference (see §Ontology below)
+#   Outputs: final record + ontology edges
+#
+# ESCALATION CRITERIA (passed as structured JSON flag between tiers):
+#   escalate_reason: "low_confidence" | "multi_category" | "unknown_site" |
+#                    "long_context" | "dedup_ambiguous" | "ontology_edge"
+
+# ─── ONTOLOGY PROMPTS ─────────────────────────────────────────────────────────
+#
+# This repo is a practical exercise in building a domain ontology from scraped data.
+# An ontology defines: Concepts, Relationships, Hierarchy (is-a, part-of, related-to).
+#
+# TARGET ONTOLOGY STRUCTURE:
+#
+#   ConferenceDomain (top concept)
+#   ├── ResearchField
+#   │   ├── AI
+#   │   │   ├── MachineLearning
+#   │   │   │   ├── DeepLearning
+#   │   │   │   ├── ReinforcementLearning
+#   │   │   │   └── NLP
+#   │   │   └── ComputerVision
+#   │   ├── Systems
+#   │   │   ├── OperatingSystems (Linux)
+#   │   │   ├── DevOps
+#   │   │   └── Networking
+#   │   ├── HardwareDesign (ChipDesign)
+#   │   │   ├── VLSI
+#   │   │   ├── EDA
+#   │   │   └── FPGA
+#   │   ├── Mathematics
+#   │   └── Legal
+#   ├── ConferenceType
+#   │   ├── Conference
+#   │   ├── Workshop
+#   │   ├── Symposium
+#   │   └── Journal (special issue)
+#   ├── Organization
+#   │   ├── IEEE
+#   │   ├── ACM
+#   │   ├── Springer
+#   │   └── Independent
+#   └── Location
+#       ├── Virtual
+#       └── Physical
+#           ├── Country → Region → City
+#           └── India → State → City
+#
+# ONTOLOGY LEARNING TASKS (model-assisted, by tier):
+#
+# TIER 1  Extract raw tags from CFP "Categories" field on WikiCFP event pages
+#         These are user-supplied keywords → raw concept candidates
+#
+# TIER 2  Group synonymous tags:
+#         ["machine learning","ML","statistical learning"] → MachineLearning
+#         ["VLSI","very large scale integration"] → VLSI
+#
+# TIER 3  Infer is-a relationships:
+#         "DeepLearning is-a MachineLearning" from co-occurrence patterns
+#         "FPGA is-a HardwareDesign" from series classification
+#
+# TIER 4  Validate hierarchy + detect cross-domain edges:
+#         "Hardware Security" → ChipDesign AND Security (both, not either)
+#         "Quantum Computing" → where does it fit? (new branch candidate)
+#
+# TOOLS:
+#   owlready2       pip install owlready2      # Python OWL ontology library
+#   rdflib          pip install rdflib          # RDF/OWL graph manipulation
+#   Protégé         GUI ontology editor         # visualise + edit manually
+#   Qdrant          (already in stack)          # vector similarity for concept grouping
+#
+# ONTOLOGY OUTPUT FILES (to be generated):
+#   ontology/conference_domain.owl    # OWL file — full ontology
+#   ontology/concepts.json            # flat concept list with synonyms
+#   ontology/edges.json               # is-a, part-of, related-to triples
+#   ontology/by_conference.json       # per-conference ontology tags
+
 # ─── ADD YOUR PROMPTS BELOW THIS LINE ────────────────────────────────────────
 
