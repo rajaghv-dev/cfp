@@ -865,48 +865,795 @@ Majors et al. — the SRE-flavoured update.
 
 ---
 
+## Module 14 — Async Python and asyncio
+
+### What sync vs async means
+A **synchronous** function runs from start to finish, blocking the calling
+thread until it returns. An **asynchronous** function can pause itself
+(`await`) while waiting for slow I/O, letting the same thread make progress
+on other work in the meantime. Both run on a single OS thread; the difference
+is whether work *yields* during waits or hogs the CPU.
+
+### Why we use it
+Scraping WikiCFP is overwhelmingly I/O-bound: 99% of wall-clock time is spent
+waiting for HTTP responses. A synchronous loop with `requests.get()` leaves
+the CPU idle for entire seconds per page. Switching to `aiohttp` lets one
+worker overlap multiple in-flight requests against different domains, giving
+~3–5× throughput at zero extra CPU cost. This is the single highest-leverage
+performance change available without parallel hardware.
+
+### How it fits
+`wcfp/fetch.py` will use `aiohttp.ClientSession` and `asyncio.gather()` to
+fan out concurrent fetches against multiple domains, replacing the synchronous
+`requests` library used in the original `scraper.py` — see `arch.md §S13`
+("Async HTTP in fetch.py"). Per-domain Gaussian delay still serialises calls
+to the *same* host, so concurrency only helps across domains.
+
+### Further reading
+*Using Asyncio in Python* by Caleb Hattingh.
+
+---
+
+## Module 15 — BeautifulSoup4 and HTML Parsing
+
+### What it is
+BeautifulSoup4 (BS4) is a Python library that turns raw HTML bytes into a
+navigable tree of Python objects. The **DOM** (Document Object Model) is the
+formal name for that tree: every tag becomes a node, every text fragment
+becomes a leaf (a `NavigableString`). BS4 exposes traversal methods like
+`find()` (first match), `find_all()` (every match), and CSS-style
+`select(".classname")` queries on top of the tree.
+
+### Why we use it
+WikiCFP serves plain server-rendered HTML, not JSON. To get structured event
+records we have to extract them from the page's table layout — and that
+layout has a nasty quirk: each conference occupies *two* `<tr>` rows (a title
+row followed by a detail row). BS4 handles this paired-row pattern cleanly
+because it returns siblings in source order, so `zip(rows[::2], rows[1::2])`
+walks event records correctly. Using regex on raw HTML would be far more
+fragile.
+
+### How it fits
+`wcfp/parsers/wikicfp.py` copies `find_data_table()` and `parse_table()`
+verbatim from the original `scraper.py` — see `codegen/04_wikicfp_parser.md`
+lines 90–143. Both functions take a `BeautifulSoup` object built with the
+`lxml` parser backend (faster than the stdlib `html.parser`).
+
+### Further reading
+*Web Scraping with Python* by Ryan Mitchell — the BS4 chapter.
+
+---
+
+## Module 16 — HTTP Semantics, Headers, and Retry Logic
+
+### What it is
+HTTP is a request/response protocol. Each response carries a numeric **status
+code**: `200 OK` (success), `301`/`302` (redirect — follow the `Location`
+header), `404 Not Found` (the URL never existed or is gone), `410 Gone` (it
+was here and is permanently removed), `429 Too Many Requests` (slow down),
+`5xx` (server problem). **Headers** are key-value pairs attached to every
+request and response: `User-Agent` identifies the client, `Accept` declares
+acceptable response formats, `Cookie` carries session state, `Referer`
+declares where the request was linked from.
+
+### Why we use it
+Retries cannot be naive. A `404` is **fatal** — retrying makes no difference;
+the page is gone. A `429` or `503` is **retryable** — the server is asking
+you to wait. Conflating them either gives up too early on transient outages
+or hammers servers with hopeless requests. Adding **jitter** (random noise)
+to backoff prevents the *thundering herd*: when many workers fail at the
+same instant, jitter spreads their retries across time so the recovering
+server doesn't get re-stampeded.
+
+### How it fits
+`wcfp/fetch.py` raises `RetryableError` on 429/5xx/timeout and `FatalError`
+on 404/410/robots-disallow — see `context.md §15`. The retry policy reads
+`MAX_RETRIES=5`, `RETRY_BACKOFF_BASE=2.0`, and `RETRY_BACKOFF_CAP=600` from
+`wcfp/config.py` (codegen/01 lines 79–81). After the cap, jobs go to
+`wcfp:dead` for Tier 4 batch processing.
+
+### Further reading
+*HTTP: The Definitive Guide* by Gourley and Totty.
+
+---
+
+## Module 17 — Date and Time Handling in Python
+
+### What it is
+`datetime.date` is a calendar date with year/month/day only — no time of day,
+no timezone. `datetime.datetime` adds hours/minutes/seconds and (when made
+*aware*) a timezone. **ISO-8601** is the international format `YYYY-MM-DD`
+that sorts lexicographically and parses unambiguously. The `dateutil` library
+adds `dateutil.parser.parse(s, fuzzy=True)`, which gracefully handles messy
+human input like "Mar 15, 2026" or "March 15th 2026".
+
+### Why we use it
+Every conference field this pipeline cares about — submission deadline,
+notification, camera-ready, start/end — is a calendar date, not a moment in
+time. Storing them as `date` (not `datetime`) avoids meaningless timezone
+conversions and 23:59 vs 00:00 ambiguity. WikiCFP and CFP emails write dates
+in dozens of formats ("Mar 15", "March 15, 2026", "15.3.26", "TBA"), so we
+need fuzzy parsing — and a guard that returns `None` (not a wrong guess) for
+"TBD" or "N/A".
+
+### How it fits
+`_safe_parse_date()` in `wcfp/parsers/wikicfp.py` (codegen/04 lines 48–66) is
+the pipeline's single entry point for date parsing: it calls
+`dateutil.parser.parse(fuzzy=True)`, returns `None` on failure, and downstream
+code uses `COALESCE` to avoid overwriting a known date with a parse failure.
+Partial dates ("March 2026") are pinned to the first of the month with
+reduced confidence in the LLM output.
+
+### Further reading
+The `dateutil` documentation; *Python Cookbook* by Beazley and Jones — the
+"Dates and Times" chapter.
+
+---
+
+## Module 18 — Docker and Docker Compose
+
+### What it is
+A **container** is an isolated process with its own filesystem and network
+namespace, sharing the host kernel. An **image** is a frozen blueprint;
+running it produces a container. **Docker Compose** is a higher-level tool
+that reads a `docker-compose.yml` file and starts/stops a set of related
+containers as one logical unit. **Named volumes** are persistent disk areas
+that survive `docker compose restart` (and even `docker compose down`) but
+are wiped by `docker compose down -v`.
+
+### Why we use it
+Installing PostgreSQL with the right pgvector extension version directly on a
+laptop is a per-OS chore that breaks on every distro upgrade. A Docker image
+guarantees that PostgreSQL 16 + pgvector behaves identically on your laptop,
+a borrowed DGX, and a cloud GPU. The two-service Compose file (PostgreSQL +
+Redis) is the smallest reproducible foundation the pipeline can rest on. v1
+intentionally uses `pgvector/pgvector:pg16` rather than `apache/age:PG16_latest`
+to keep the AGE complexity out of the way until v2 needs it.
+
+### How it fits
+`docker-compose.yml` (codegen/13) declares two services, `postgres` and
+`redis`, with named volumes `pg_data` and `redis_data`. `make wipe` runs
+`docker compose down -v` to fully reset local state — central to the
+ephemeral-local-state lifecycle in `context.md §18`.
+
+### Further reading
+*Docker: Up & Running* by Sean Kane and Karl Matthias.
+
+---
+
+## Module 19 — Git Workflow for Solo Projects
+
+### What it is
+A **commit** is a snapshot of the working tree plus a message; not a "save"
+button but a checkpoint that you can later return to or compare against.
+**Branches** are independent lines of commits. **Staging** (`git add`) lets
+you choose which changes go into the next commit. `git log --oneline` shows
+the project's history as a one-line-per-commit list. `git diff --cached`
+shows what is currently staged but not yet committed.
+
+### Why we use it
+For a solo project working straight on `main` is fine — branches matter most
+for code review with collaborators. The discipline that *does* matter solo:
+imperative-mood commit messages ("Add config.py" not "Added"), atomic
+commits (one logical change each), and `git add <files>` not `git add -A`.
+The `-A` form sweeps in everything including stray `.env` files and accidental
+`pg_dump` artefacts — exactly the secret-leak vector this project must avoid.
+
+### How it fits
+`CLAUDE.md` carries the standing instruction "never use `git add -A`" as a
+preventative against committing the GCS service-account JSON or a PG dump.
+Amend is forbidden after push; create a new commit instead — every push is
+the public record.
+
+### Further reading
+*Pro Git* by Scott Chacon and Ben Straub (free online).
+
+---
+
+## Module 20 — Scraping Ethics and Legal Considerations
+
+### What it is
+`robots.txt` is a plain-text file at the root of a domain telling crawlers
+which paths are off-limits (`Disallow: /private/`) and how slowly to fetch
+(`Crawl-delay: 8`). **ToS** (Terms of Service) is the site's legal contract;
+many forbid automated access. The **CFAA** (Computer Fraud and Abuse Act) in
+US law makes accessing a system "without authorisation" a federal crime —
+courts have interpreted this narrowly since *hiQ v. LinkedIn*, but the line
+still exists.
+
+### Why we use it
+The pipeline's social licence to operate depends on being indistinguishable
+from a careful human reader. That means: honour `robots.txt`, never bypass
+authentication, don't scrape behind login walls, randomise inter-request
+delays, and pause occasionally to look like a person glancing away. The
+`_is_english()` filter is *not* discrimination — it's scope: this project
+targets English-language CS venues and saves bandwidth by skipping pages it
+won't classify well anyway.
+
+### How it fits
+`wcfp/config.py` sets `HUMAN_DELAY_MEAN=8.0`, `HUMAN_DELAY_STD=2.5`, and
+`HUMAN_DELAY_LONG_PROB=0.10` (codegen/01 lines 72–76) — the inter-request
+politeness budget. Robots.txt is fetched per-domain, cached for 24h in
+`wcfp:robots:{domain}`, and a disallow raises `FatalError`.
+
+### Further reading
+*Web Scraping with Python* by Ryan Mitchell — the legal chapter; the EFF
+write-ups on *hiQ v. LinkedIn* and *Van Buren v. United States*.
+
+---
+
+## Module 21 — Testing Strategy for This Pipeline
+
+### What it is
+**Unit tests** exercise pure functions — given inputs A, assert output B. No
+network, no DB. **Fixture-based tests** save real I/O responses to disk
+(`tests/fixtures/wikicfp_iccv2026.html`) and run code against them, so a
+parser regression is caught without re-hitting WikiCFP. **Contract tests**
+for LLMs assert *shape*, not value: given any non-empty input, the output
+JSON must contain the keys `is_cfp` (bool) and `confidence` (float), but not
+which value those keys take — LLM outputs are stochastic and value-asserts
+will flap.
+
+### Why we use it
+v1 cannot ship without tests because the pipeline writes to a database that
+survives sessions: a silent parser bug pollutes the corpus permanently. The
+three-tier strategy (unit / fixture / contract) covers the three failure
+classes that have actually occurred during development: regex edge cases,
+WikiCFP HTML changes, and LLM JSON-mode escapes.
+
+### How it fits
+`tests/fixtures/wikicfp_iccv2026.html` will be the seed fixture for
+`tests/test_wikicfp_parser.py`, asserting that `parse_event_detail()` returns
+`acronym == "ICCV"` and `start_date == date(2026, 10, 11)`. PostgreSQL is
+*not* mocked — per `arch.md` reviewer feedback, tests run against a real
+disposable PG database brought up via Docker Compose.
+
+### Further reading
+*Test-Driven Development with Python* by Harry Percival; Brian Okken's
+*Python Testing with pytest*.
+
+---
+
+## Module 22 — Python Packaging and Virtual Environments
+
+### What it is
+A **virtual environment** is an isolated Python installation with its own
+`site-packages` directory, created by `python -m venv .venv` and activated
+by `source .venv/bin/activate`. **`pip install -r requirements.txt`**
+installs every line of the requirements file into the active venv.
+**Pinning** (`psycopg[binary]==3.1.18`) freezes the exact version so
+`pip install` produces the same result on every machine.
+
+### Why we use it
+Without a venv, two projects on the same laptop fight over psycopg2 vs
+psycopg3, BeautifulSoup vs bs4 — and a global `pip install` can break
+system tools that depend on a specific version. With a venv, `.venv/` is
+disposable: `rm -rf .venv && python -m venv .venv && pip install -r
+requirements.txt` reproduces the environment from scratch. This project
+specifically requires **psycopg3** (not psycopg2): native `async`, binary
+protocol, and clean `jsonb` typing all matter for the pipeline's
+async-in-aiohttp + vector-write workload.
+
+### How it fits
+`setup.sh` creates `.venv/` and runs `pip install -r requirements.txt`. The
+requirements file pins `psycopg[binary]` (psycopg3 with the C extension
+bundled, no system `libpq-dev` needed) — see `SESSION.md` constraint 2.
+
+### Further reading
+The Python Packaging User Guide (`packaging.python.org`); *Effective Python*
+by Brett Slatkin — Item 83 on virtual environments.
+
+---
+
+## Module 23 — Environment Variables and 12-Factor Config
+
+### What it is
+**Environment variables** are key-value pairs attached to a running process,
+inherited from its parent. Python reads them via `os.getenv("KEY", "default")`.
+The **12-Factor App** methodology is a set of principles for cloud-native
+software; Factor III ("Config") says configuration that varies between
+deployments — credentials, hostnames, bucket names — must live in env vars,
+never in code or committed files. `.env.example` documents which env vars
+exist (committed); `.env` holds the real values (gitignored).
+
+### Why we use it
+The pipeline runs on three machines (laptop, DGX, GPU cloud) with different
+hostnames, different model selections, and different storage buckets. Hard-
+coding any of those means rebuilding for every environment. Putting them in
+env vars means the same Docker image runs everywhere, configured at startup.
+And keeping secrets out of the repo eliminates the most common credential
+leak: an accidental `git add -A` of `.env`.
+
+### How it fits
+`wcfp/config.py` reads every external dependency through `os.getenv()`:
+`PG_DSN`, `REDIS_URL`, `OLLAMA_HOST`, `WCFP_MACHINE`, `GCS_BUCKET`,
+`GCS_PREFIX`, `RCLONE_REMOTE`, `USER_AGENT` — see codegen/01 lines 25–87.
+Every getenv call has a sensible local-dev default so `make run` works on a
+fresh laptop.
+
+### Further reading
+*The Twelve-Factor App* (`12factor.net`, free online) by Adam Wiggins.
+
+---
+
+## Module 24 — Python Type Hints and Dataclasses
+
+### What it is
+**Type hints** annotate function signatures and variables with the types
+they expect: `def fn(x: int) -> str:`. They are not enforced at runtime —
+they're consumed by IDE autocomplete and static checkers like `mypy`. A
+**`@dataclass`** is a class decorator that auto-generates `__init__`,
+`__repr__`, and `__eq__` from class-level type annotations. **`@dataclass(slots=True)`**
+adds `__slots__` to skip the per-instance `__dict__`, which makes attribute
+access faster and shrinks memory footprint by ~30% for large collections.
+**`Optional[str]`** and **`str | None`** are the same type; the second is
+the Python 3.10+ syntax. **`field(default_factory=list)`** provides a fresh
+mutable default per instance — a class-level `= []` would be shared across
+all instances and is a classic bug.
+
+### Why we use it
+Models in this pipeline are passed through async tasks, batched into LLM
+calls, serialised to JSON, and written to PostgreSQL. Without type hints,
+each handoff is a guessing game; with hints, the IDE flags a typo before
+the tier-2 LLM ever runs. `slots=True` matters because the embedding worker
+holds tens of thousands of `Event` instances in memory at once.
+
+### How it fits
+`wcfp/models.py` (codegen/01) defines `Event`, `Person`, `Organisation`,
+and `Venue` as `@dataclass(slots=True)` with full type hints; `Optional[date]`
+appears on every deadline field; `field(default_factory=list)` is used for
+the `categories` and `raw_tags` fields.
+
+### Further reading
+*Robust Python* by Patrick Viafore; the PEP 484 (type hints) and PEP 557
+(dataclasses) documents.
+
+---
+
+## Module 25 — Regular Expressions in Python
+
+### What it is
+A **regex** is a pattern that matches text. `re.compile(pattern)` builds a
+reusable pattern object; `re.search(pattern, text)` does a one-shot match.
+**Groups** `()` capture sub-matches; **non-capturing groups** `(?:...)`
+group without capturing; **named groups** `(?P<year>20[0-9]{2})` give
+captures readable names. **Greedy** `*`/`+` match as much as possible;
+**lazy** `*?`/`+?` match as little. The `re.DOTALL` flag makes `.` match
+newlines (needed for multi-line HTML).
+
+### Why we use it
+Several extraction tasks on WikiCFP are too small to justify a parser but
+too repetitive to write inline: extracting a 4-digit year from text, finding
+deadline date strings inside cells, and filtering non-Latin-script content.
+`re.compile()` once at module load + `pattern.search(text)` per row beats
+inline `re.search(...)` by ~5× because compilation is cached only when the
+pattern fits in a small LRU.
+
+### How it fits
+`_NON_LATIN_RE` in `wcfp/parsers/wikicfp.py` (codegen/04 lines 27–46) is
+compiled once and used by `_is_english()`, which counts non-Latin characters
+and returns `False` if more than 5% of the text is non-Latin. The same file
+uses `re.search(r"20[0-9]{2}", text)` for year extraction in date cells.
+
+### Further reading
+*Mastering Regular Expressions* by Jeffrey Friedl (3rd ed.).
+
+---
+
+## Module 26 — YAML and JSON Parsing in Python
+
+### What it is
+**YAML** is a human-readable, indentation-based format for config and data.
+**`yaml.safe_load(s)`** parses YAML into Python primitives; never use
+`yaml.load(s)` without a `Loader=` argument — it can construct arbitrary
+Python objects (including ones that execute code). **JSON** is a stricter,
+machine-oriented format; `json.loads(s)` parses, `json.dumps(obj)` serialises.
+LLM outputs are JSON because JSON is unambiguous and parseable; YAML's
+ambiguity ("yes" vs `true`, indentation gotchas) makes it a bad choice for
+machine-generated data.
+
+### Why we use it
+The `ai-deadlines` source is a community-maintained YAML file listing top AI
+conferences with their deadlines. Parsing it correctly is the second-cheapest
+data source the pipeline has (after WikiCFP). And every LLM tier returns
+JSON, so the pipeline must be robust to slightly broken JSON: a 3-level
+fallback (direct parse → fenced ```json``` extraction → outermost-brace
+scan) catches >95% of model output without re-prompting.
+
+### How it fits
+`wcfp/parsers/ai_deadlines.py` calls `yaml.safe_load(resp.text)` to parse the
+deadlines YAML — see codegen/04 line 277. The LLM JSON fallback chain lives
+in `wcfp/llm/utils.py` as `_parse_json_response()` and is invoked by every
+tier client.
+
+### Further reading
+The PyYAML documentation; the JSON spec (`json.org`).
+
+---
+
+## Module 27 — CLI Design with Python
+
+### What it is
+**`python -m wcfp <command>`** runs the `wcfp` package as a script — Python
+imports `wcfp/__main__.py` (or, when present, the `cli.py` entry point).
+**argparse** is the stdlib CLI parser. **click** is a popular third-party
+alternative. **typer** is a modern wrapper that builds the CLI from
+type-hinted function signatures: `def run_pipeline(workers: int = 1)` becomes
+a `--workers` flag automatically. **Rich** is a terminal-rendering library
+for tables, coloured text, progress bars. **Exit codes** signal status to
+the shell: `0` = success, non-zero = failure — what `make` and shell `&&`
+chains depend on.
+
+### Why we use it
+The pipeline ships ~10 subcommands (`init-db`, `run-pipeline`, `sync-push`,
+`sync-pull`, `bootstrap-ontology`, `report`, `serve`, …) and a colourful
+report view (deadlines coloured red/orange/green by urgency). typer + Rich
+gets that with the least code: no boilerplate parser construction, free
+type validation, and the same Python functions become both library calls
+and CLI entries.
+
+### How it fits
+`wcfp/cli.py` (codegen/12) wires every command via typer; the `report`
+subcommand uses Rich's `Table` with cell colouring (`red` if deadline < now,
+`orange` if < 7 days, `green` otherwise). `make run` invokes `python -m wcfp
+run-pipeline`, relying on the `0` exit code to chain into `make sync`.
+
+### Further reading
+The typer documentation; *Click* docs by Armin Ronacher.
+
+---
+
+## Module 28 — Logging and Structured Logging
+
+### What it is
+Python's **`logging`** module provides leveled output: `DEBUG`, `INFO`,
+`WARNING`, `ERROR`, `CRITICAL`. Each logger has a **name** (conventionally
+`__name__` of the module), forming a hierarchy: `wcfp.parsers.wikicfp`
+inherits from `wcfp.parsers` inherits from `wcfp` inherits from root.
+**Structured logging** writes each event as a JSON object with named fields
+(`{"ts": "2026-04-26T12:00:00Z", "level": "INFO", "event": "scrape_ok",
+"url": "https://wikicfp.com/...", "duration_ms": 312}`), which downstream
+aggregators (Loki, Cloud Logging) can index without regex.
+
+### Why we use it
+`print()` is fine for a script. For a long-running pipeline that writes to
+disk, fans out async tasks, and runs unattended overnight on a remote GPU,
+you need: severity levels (so you can silence DEBUG in production), per-
+module loggers (so you can crank `wcfp.fetch` to DEBUG without drowning in
+embedding logs), timestamps, and machine-parseable output. Free-text logs
+fall apart at scale.
+
+### How it fits
+Every module starts with `logger = logging.getLogger(__name__)`. The pipeline's
+operational dashboard reads structured log lines built around a Redis hash
+`wcfp:metrics:tier{N}` that tracks `ok`, `escalated`, `failed` counters per
+tier — see `arch.md §S8`. Fields like `tier`, `outcome`, `model_name` flow
+straight from the log to Grafana.
+
+### Further reading
+*Effective Python* by Brett Slatkin — the logging item; the Python `logging`
+docs.
+
+---
+
+## Module 29 — rclone and Cloud Storage Operations
+
+### What it is
+**rclone** is rsync for cloud storage. One CLI talks to S3, GCS, Backblaze
+B2, Azure Blob, Dropbox, and ~50 others with the same syntax. **`rclone
+copy SRC DST`** is *additive* — files in DST that aren't in SRC are left
+alone. **`rclone sync SRC DST`** makes DST *match* SRC, which means it
+deletes files in DST that aren't in SRC. For backups always use `copy`;
+`sync` will silently destroy older snapshots if used the wrong way round.
+**`rclone config`** is an interactive setup that creates a named remote
+(e.g. `gcs:`) bound to credentials.
+
+### Why we use it
+The pipeline's cloud-portability promise (work on any machine, sync state
+to GCS) requires a tool that talks GCS without a Google-specific SDK. On
+GKE, **Workload Identity** binds the pod's K8s service account to a GCP
+IAM identity, so rclone calls authenticate with no JSON key file mounted —
+the most common credential-leak vector vanishes.
+
+### How it fits
+`wcfp/sync.py` (codegen/16) calls `rclone copy ./data/pg_backup/
+gcs:wcfp-data/prod/pg_backup/` after `pg_dump -F c -f latest.dump`. The
+remote name comes from `RCLONE_REMOTE` in `config.py`; the bucket and prefix
+from `GCS_BUCKET` and `GCS_PREFIX`.
+
+### Further reading
+The rclone documentation (`rclone.org/docs`); Google's Workload Identity
+guide.
+
+---
+
+## Module 30 — Makefile and Build Automation
+
+### What it is
+A **Makefile** is a file of named recipes. `make run` runs the recipe under
+`run:`; `make setup` runs the one under `setup:`. A target with prerequisites
+(`build: src/foo.py`) runs the recipe only if the prerequisite is newer than
+the target file. **`.PHONY`** declares a target as not-a-file (otherwise
+`make` would skip it once a file of that name appeared in the directory).
+Tabs (not spaces) introduce recipe lines — this is the most common Makefile
+gotcha for newcomers.
+
+### Why we use it
+The four-phase machine lifecycle (pull → run → sync → wipe) is the right UX
+target: one verb per phase, easy to remember, easy to chain. A Makefile
+collapses that into `make pull && make run && make sync && make wipe` — or
+the simpler `make all`. A shell script could do the same, but `make`'s
+target-graph semantics (run prerequisites first, only what's needed) and
+its near-universal availability make it the lowest-friction choice.
+
+### How it fits
+`Makefile` (codegen/13) declares `setup`, `run`, `sync`, `wipe`, `logs`,
+`shell-pg`, `shell-redis` as `.PHONY` targets. `make wipe` runs `docker
+compose down -v` — the destructive reset that's central to the ephemeral-
+local-state model in Module 18.
+
+### Further reading
+*Managing Projects with GNU Make* by Robert Mecklenburg.
+
+---
+
+## Module 31 — The Academic Conference Ecosystem
+
+### What it is
+A **CFP** (Call for Papers) is an announcement inviting researchers to
+submit their work to a conference. The typical timeline runs ~9 months:
+CFP published → abstract deadline → full paper deadline → peer review →
+notification → camera-ready → conference. **Peer review** is the practice
+of submissions being read and scored by domain experts; **double-blind**
+hides both author and reviewer identities, **single-blind** only the
+reviewer's. **CORE rankings** (A\*/A/B/C) are the de-facto quality tiers
+for CS conferences, maintained by the Computing Research and Education
+Association of Australasia. Major **publishers** (IEEE, ACM, Springer,
+USENIX) sponsor or organise conferences and publish the **proceedings** —
+the bound, citable record of accepted papers. A **workshop** is a smaller
+focused event co-located with a main conference. **DBLP** is a free
+bibliographic database covering nearly every published CS paper.
+
+### Why we use it
+The pipeline's value is filtering signal from noise — and the academic
+ecosystem provides several ready-made signals. CORE rank flags quality
+venues. Publisher (IEEE/ACM/USENIX) excludes most predatory ones. DBLP
+presence confirms a venue is real. Workshop-vs-main distinguishes scope.
+Without these vocabulary anchors, the pipeline would drown in low-quality
+listings.
+
+### How it fits
+The `rank` field on the `Event` dataclass and `events.rank` column in the
+DB schema (codegen/05) hold the CORE rank. The Tier 2 LLM proposes a rank;
+the CORE table import (`arch.md §S12`) overrides it when they disagree.
+CORE A\* and A conferences are the pipeline's primary quality filter for
+report views.
+
+### Further reading
+*Conducting Research in Computer Science* by various authors; the CORE
+Conference Ranking Portal documentation.
+
+---
+
+## Module 32 — OWL Ontologies and Protege
+
+### What it is
+An **ontology** in the formal CS sense is a shared, machine-readable
+vocabulary of a domain: a set of classes (Conference, Researcher, Topic),
+properties (chairs, isAbout, partOf), and relationships (DiffusionModels
+isA GenerativeAI), described in a way software can reason over. **OWL 2**
+(Web Ontology Language) is the W3C standard format. Information lives as
+**triples**: subject → predicate → object (e.g. `ICCV → isA → ComputerVisionConference`).
+**`is_a`** means the subject is a kind of the object; **`part_of`** means
+the subject is a component of the object. **owlready2** is a Python
+library that loads, edits, and writes OWL files. **Protege** is the
+free Stanford GUI for browsing and editing ontologies — useful for
+visualising the concept hierarchy as a tree.
+
+### Why we use it
+This pipeline's *live* ontology is the AGE graph in PostgreSQL — always
+current, queried directly. OWL is just an export: a snapshot in a
+standard format that domain experts can open in Protege to inspect or
+share. Editing in Protege wouldn't flow back, so the export is read-only
+by design. This split keeps the working ontology fast and the
+collaborative ontology portable.
+
+### How it fits
+`wcfp/ontology.py` (v2 scope) walks the `Concept`, `IS_A`, and `SYNONYM_OF`
+nodes/edges in the AGE graph via Cypher and uses `owlready2` to write
+`ontology/conference_domain.owl` — see `context.md §14`. The .owl file
+ships next to the repo for Protege users; the source of truth stays in
+PostgreSQL.
+
+### Further reading
+*Semantic Web for the Working Ontologist* by Allemang, Hendler, and Gandon.
+
+---
+
+## Module 33 — pgBouncer and Connection Pooling
+
+### What it is
+A **PostgreSQL connection** is a persistent TCP socket plus an
+authentication handshake — opening a fresh one takes ~10–20 ms and
+~10 MB of server RAM. PostgreSQL caps total connections at
+`max_connections` (default 100). **Connection pooling** keeps a small
+pool of long-lived real connections and multiplexes many client
+connections onto them. **pgBouncer** is a tiny C daemon that does
+exactly this: clients connect to it (cheap), it routes them onto the
+real PG connections. **Transaction-mode pooling** binds a real
+connection to a client only for one transaction (efficient, but breaks
+session-state features like `SET` and prepared statements). **Session-
+mode pooling** binds for the whole session (works with everything, but
+less efficient).
+
+### Why we use it
+At one Python process with five workers, raw connections are fine. At
+ten Kubernetes scraper pods × five workers each = 50 connections — half
+the default cap, with no headroom for dashboards, migrations, or
+admin sessions. A 100th connection attempt fails with `too many
+connections`. pgBouncer pushes the breaking point out by ~10×.
+
+### How it fits
+The current single-machine v1 does *not* run pgBouncer. `arch.md §S4`
+flags pgBouncer as required when scraper workers scale horizontally
+above ~10 concurrent connections — which happens during the K8s
+migration in §5.
+
+### Further reading
+The pgBouncer documentation; *PostgreSQL High Performance* by Gregory
+Smith.
+
+---
+
+## Module 34 — Concurrency Deep-Dive: Threads vs asyncio vs Multiprocessing
+
+### What it is
+The **GIL** (Global Interpreter Lock) is a CPython mutex that serialises
+Python bytecode execution in one process — only one thread runs Python
+at a time. Threads still help for I/O because the GIL is released around
+blocking syscalls (a thread waiting on a socket gives up the GIL).
+**asyncio** is single-threaded *cooperative* concurrency: one thread,
+many coroutines, explicit `await` yield points. **multiprocessing**
+spawns multiple Python processes, each with its own GIL — true CPU
+parallelism. Rule of thumb: threads for blocking legacy code, asyncio
+for I/O, multiprocessing for CPU.
+
+### Why we use it
+Picking the right concurrency model per task is performance-critical.
+HTTP fetches and PostgreSQL writes are I/O-bound — asyncio is the right
+fit. LLM inference is GPU-bound and one model fits in VRAM at a time —
+sequential calls are correct, parallel would just thrash. Embedding
+generation could in principle parallelise, but Ollama serialises GPU
+access internally so multiprocessing wouldn't help. Knowing this avoids
+"add threads, see no speedup" rabbit holes.
+
+### How it fits
+`wcfp/fetch.py` opens an `aiohttp.ClientSession` and uses `asyncio.gather()`
+to fan out fetches against multiple domains concurrently; per-domain
+Gaussian delay still serialises within a domain. `wcfp/llm/tier{N}.py`
+calls Ollama sequentially. See `arch.md §S13` (async HTTP) and §S15
+(`--workers N` for orchestrator-level parallelism).
+
+### Further reading
+*High Performance Python* by Gorelick and Ozsvald; David Beazley's
+talks on the GIL.
+
+---
+
+## Module 35 — Backoff, Jitter, and Retry Patterns
+
+### What it is
+**Naive retry** (immediate retry on failure) is the bug. **Exponential
+backoff** waits `BASE**attempt` seconds: 2, 4, 8, 16, … doubling each
+time. **Cap** stops growth (`min(BASE**attempt, CAP)`) so you don't
+wait an hour after attempt 12. **Jitter** adds random noise so workers
+don't synchronise: `delay + random.random()`. **Decorrelated jitter**
+is even better: `min(cap, random.uniform(base, prev_delay * 3))` —
+breaks any incidental correlation between workers. **Thundering herd**
+is the failure mode jitter prevents: thousands of workers all retry at
+the same instant after a brief outage, re-stampeding the recovering
+service. Distinguish **`RetryableError`** (try again with backoff) from
+**`FatalError`** (stop trying — 404 means the page is gone).
+
+### Why we use it
+At one worker, retry strategy doesn't matter much. At 20 K8s scraper
+pods all hitting WikiCFP, naive retry guarantees a self-DDoS the moment
+WikiCFP burps. Exponential backoff + jitter is the textbook fix and is
+cheap to implement. Distinguishing fatal from retryable means we don't
+waste five attempts on a `410 Gone` URL.
+
+### How it fits
+`wcfp/config.py` sets `MAX_RETRIES=5`, `RETRY_BACKOFF_BASE=2.0`,
+`RETRY_BACKOFF_CAP=600` (codegen/01 lines 79–81). `wcfp/fetch.py`'s
+`with_retry` decorator catches `RetryableError`, sleeps
+`min(BASE**attempt + random.random(), CAP)`, and after `MAX_RETRIES`
+`RPUSH`es the job onto `wcfp:dead` for human inspection.
+
+### Further reading
+The AWS Architecture Blog post "Exponential Backoff and Jitter" by Marc
+Brooker; *Release It!* by Michael Nygard.
+
+---
+
 ## Glossary
 
 | Term | One-line definition |
 |------|---------------------|
+| 12-Factor App | Methodology for cloud-native software; mandates config in env vars, statelessness, and disposability. |
 | AGE | Apache AGE — a PostgreSQL extension that adds property-graph storage and Cypher query support inside PG. |
+| aiohttp | Async HTTP client/server library for Python; the asyncio replacement for `requests` used in `wcfp/fetch.py`. |
 | ANN | Approximate Nearest Neighbour — index-based vector search that trades 1-5% recall for 100× speed. |
 | AOF | Append-Only File — Redis persistence mode that logs every write to disk; replay rebuilds in-memory state on crash. |
+| async/await | Python keywords marking a coroutine and a yield point inside it; the syntactic basis of asyncio. |
+| asyncio | Python's standard-library single-threaded cooperative-concurrency framework for I/O-bound work. |
+| BeautifulSoup4 | Python HTML parsing library; turns raw HTML into a navigable DOM tree (`find()`, `find_all()`, CSS selectors). |
+| CFAA | Computer Fraud and Abuse Act — US law making unauthorised computer access a federal offence. |
 | CFP | Call for Papers — an academic announcement soliciting paper submissions for a conference or journal. |
 | CMT | Microsoft's Conference Management Toolkit — a paper submission system used by many ACM and IEEE venues. |
 | COALESCE | SQL function returning the first non-null argument; used in upserts to avoid wiping known fields with new NULLs. |
 | CORE ranking | Australian-led conference quality ranking with tiers A*/A/B/C; authoritative for CS conferences. |
+| Coroutine | A function defined with `async def` that can suspend at `await` points and resume later on the event loop. |
 | Cypher | Neo4j-originated graph query language used by Apache AGE; reads as ASCII art for nodes and edges. |
+| DBLP | Free bibliographic database covering virtually every published computer-science paper and venue. |
 | Dead-letter | A list of jobs that failed too many times; processed by Tier 4 batch rather than discarded. |
+| dateutil | Third-party Python library extending the stdlib `datetime` module; `parse(fuzzy=True)` handles messy date strings. |
+| Decorrelated jitter | Backoff strategy that draws each delay from `uniform(base, prev_delay*3)`, capped — better dispersion than additive jitter. |
 | DGX | Nvidia's high-end GPU server (A100/H100, 80+ GB VRAM); needed for Tier 4 deepseek-r1:70b. |
+| docker compose down -v | The destructive Docker Compose reset; stops services AND removes named volumes — wipes all local state. |
+| DOM | Document Object Model — the tree representation of an HTML/XML document that BeautifulSoup4 navigates. |
 | DSN | Data Source Name — the URL string identifying a database (`postgresql://user:pass@host:port/db`). |
 | DuckDB | An in-process columnar OLAP database used here as a read-only analytics layer over PostgreSQL. |
 | EDAS | Editor's Assistant — a paper submission system used heavily in IEEE communications and networking conferences. |
 | EasyChair | A widely used paper submission and conference management system, especially in academic CS. |
 | Embedding | A dense numeric vector (here 768-d) representing the semantic content of a piece of text. |
 | Escalation | The act of pushing a record to the next-higher LLM tier when the current tier's confidence is too low. |
+| Event loop | The asyncio scheduler that runs ready coroutines and resumes suspended ones when their I/O completes. |
+| Exponential backoff | Retry pattern where wait time grows as `BASE**attempt`; combined with a cap and jitter to avoid thundering herds. |
+| FatalError | Project-specific exception for non-retryable conditions (404/410/robots disallow); pushes the job to dead-letter immediately. |
+| field(default_factory) | Dataclass helper providing a fresh mutable default per instance (avoids the shared-mutable-default bug). |
 | GCS | Google Cloud Storage — Google's object store, used here as the off-machine persistence layer. |
+| GIL | Global Interpreter Lock — CPython mutex preventing true thread-parallel Python bytecode execution. |
 | HNSW | Hierarchical Navigable Small World — a graph-based ANN index; higher recall than IVFFlat but bigger and slower to build. |
 | IVFFlat | Inverted-File Flat — pgvector's default ANN index; clusters vectors into `lists` cells for fast lookup. |
+| ISO-8601 | International date/time format `YYYY-MM-DD[Thh:mm:ssZ]` that sorts lexicographically; the project's canonical date string. |
 | Inflight lease | A short-lived Redis key declaring "worker X has dequeued job Y"; auto-expires to prevent lost work on crash. |
+| Jitter | Random noise added to retry delays so concurrent workers don't synchronise their retries. |
 | JSON mode | LLM runtime flag that constrains sampling to produce syntactically valid JSON. |
 | KEDA | Kubernetes Event-Driven Autoscaler — scales pods based on external metrics like queue depth. |
+| lxml | Fast C-based XML/HTML parser used as BeautifulSoup4's preferred backend; ~3× faster than the stdlib `html.parser`. |
+| Named volume | Docker-managed persistent disk area; survives container restart and `docker compose down`, wiped only by `down -v`. |
+| NavigableString | BeautifulSoup4 type representing a text leaf in the DOM tree; behaves like `str` but knows its parent tag. |
 | nomic-embed-text | Local-runnable 768-d embedding model from Nomic; runs on CPU or ~300 MB VRAM via Ollama. |
-| OWL | Web Ontology Language — W3C standard for representing ontologies; produced as a read-only export from AGE here. |
+| os.getenv | Python stdlib function reading an environment variable with a default fallback; the 12-Factor config primitive. |
+| OWL 2 | W3C Web Ontology Language standard; the format `wcfp/ontology.py` exports the AGE graph into for Protege. |
+| owlready2 | Python library for loading, manipulating, and writing OWL 2 ontology files. |
 | pgBouncer | Connection pooler in front of PostgreSQL; needed when many app pods exhaust PG's connection limit. |
 | pgvector | PostgreSQL extension adding a `vector` column type and ANN indexes (IVFFlat, HNSW). |
+| .PHONY | Makefile directive declaring a target as not-a-file, so `make` always runs its recipe even if a file of that name exists. |
 | Predatory conference | A conference that accepts papers with no peer review for a fee; pollutes search results if not filtered. |
+| Proceedings | The bound, citable record of papers accepted at a conference; published by IEEE/ACM/USENIX/Springer. |
+| Protege | Free Stanford GUI for browsing and editing OWL ontologies; consumes the .owl export from `wcfp/ontology.py`. |
 | psycopg3 | The current-generation Python driver for PostgreSQL; supports async, binary protocol, and native jsonb. |
 | Quantisation | Compressing model weights to lower-bit representations (Q4, Q8) to fit smaller GPUs at some accuracy cost. |
 | rclone | A provider-agnostic CLI for cloud storage (GCS, S3, B2, etc.); used to push pg_dump and pull state. |
+| rclone copy vs sync | `copy` is additive and safe; `sync` deletes files in destination not present in source — never use `sync` for backups. |
+| re.DOTALL | Regex flag that makes `.` match newline characters, needed for matching multi-line HTML chunks. |
 | Redis | An in-memory key-value store with rich data structures, used here for the queue, rate limits, and inflight leases. |
+| RetryableError | Project-specific exception for transient conditions (429/5xx/timeout/LLM JSON decode); the `with_retry` decorator backs off and tries again. |
+| Rich (Python library) | Terminal rendering library for tables, coloured output, and progress bars; powers the CLI report's deadline colouring. |
 | SETNX | "Set if Not eXists" — atomic Redis primitive used for dedup-before-enqueue and per-domain rate limit. |
+| slots=True | `@dataclass` argument adding `__slots__`, replacing per-instance `__dict__` for faster attribute access and lower memory. |
 | Spot node | A discounted cloud VM that the provider can reclaim with brief notice; used for GPU batch work. |
 | StatefulSet | Kubernetes resource for stateful services with stable identities and per-pod storage; used for PostgreSQL/Redis. |
+| Structured logging | Logging style emitting one JSON object per event (vs free text); machine-parseable by Loki, Cloud Logging, etc. |
+| Thundering herd | Failure mode where many workers retry at the same instant after an outage, re-stampeding the recovering service. |
 | Tier | One of the four LLM cascade levels (Tier 1=qwen3:4b, Tier 2=qwen3:14b, Tier 3=qwen3:32b, Tier 4=deepseek-r1:70b). |
 | Tool calling | LLM feature where the model emits a structured "call function X with args Y" message; used in Tier 3. |
 | TTL | Time To Live — a Redis key's expiry duration; underpins rate limiting, seen-URL dedup, and inflight leases. |
+| typer | Modern Python CLI library that builds the parser from type-hinted function signatures; used by `wcfp/cli.py`. |
 | Upsert | INSERT ... ON CONFLICT DO UPDATE — atomic insert-or-update that keeps scraping idempotent. |
 | WAL | Write-Ahead Log — PostgreSQL's durability mechanism; underlies replication and point-in-time recovery. |
 | WikiCFP | The community-edited CFP listing site at `www.wikicfp.com`; the pipeline's primary scrape source. |
 | Workload Identity | GKE feature binding a Kubernetes service account to a GCP IAM identity; removes the need for JSON key files. |
+| Workshop (academic) | A smaller, focused event co-located with a main conference; usually one or two days, narrower topic. |
+| yaml.safe_load | The only safe way to parse YAML in Python; `yaml.load` without a safe Loader can execute arbitrary code. |
