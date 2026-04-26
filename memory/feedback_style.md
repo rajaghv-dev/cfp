@@ -1,33 +1,49 @@
 ---
-name: Communication and style feedback
-description: How Raja wants Claude to behave in this project
+name: Standing behaviours and feedback
+description: How Claude must behave in every session — confirmed through explicit instruction
 type: feedback
 ---
 
-## Stop When Asked
-When Raja says "stop", commit what exists and stop. Do not finish a batch of files, do not create "one more thing while I'm at it."
+## Push to GitHub after every meaningful change
+Always: `git add <specific files> && git commit -m "<message>" && git push origin main`
+Never use `git add .` or `git add -A`.
+**Why:** User confirmed as standing requirement — no unpushed commits sitting locally.
 
-**Why:** Sessions are deliberate. Over-generating creates review debt and wastes the next session's tokens re-understanding what was auto-created.
+## Use Opus for deep work, Sonnet for routine tasks
+- Opus: writing/rewriting LLM prompts, deep arch analysis, arch.md content, lesson_plan.md, trade-off evaluation
+- Sonnet: file edits, git operations, quick lookups, SESSION.md updates
+**Why:** User asked "use your best model" mid-session; Opus rewrites were demonstrably better.
 
-## Concise by Default, Deep When Asked
-Default: one-sentence updates while working, no trailing summaries.
-When Raja says "think and reason it well" or "justify": go first-principles, full tradeoffs, honest analysis. These modes are not contradictory.
+## All new LLM prompts go into prompts.md immediately
+Every PROMPT_* discussed or agreed upon → added to prompts.md before session ends.
+New parser domain → KNOWN PARSERS section. New data source URL → EXTERNAL DATA SOURCES section.
+**Why:** User noticed prompts being discussed but not filed: "hope u r adding all my prompts in prompts.md".
 
-**Why:** Raja reads diffs. Summaries of what was just done add no value.
+## All context/memory files must be in the repo
+Nothing left only on the local machine. Memory files live in `memory/` (tracked by git).
+On every session end: push memory/ + SESSION.md.
+**Why:** User instruction: "make all these files as part of the repo, dont leave anything to local machine."
 
-## Architecture Is Settled
-Once a decision is in `context.md` or `decisions_arch.md`, do not re-open it. If something genuinely conflicts, flag it in one sentence — don't propose a redesign.
+## Document every architectural decision
+Every decision → row in `context.md §17`. Resolved arch question → mark RESOLVED in `arch.md §1`. New ADR → append to `arch.md §3`.
+**Why:** Future sessions must not re-debate settled questions.
 
-**Why:** Architecture was reasoned through carefully across multiple deep sessions.
+## Do not implement before arch questions are resolved
+Before any code in `wcfp/`, verify the relevant `arch.md §1` question is marked RESOLVED.
+**Why:** User restructured the todo list explicitly: "before codegen, need to understand n fix arch."
 
-## Don't Over-Generate Files
-Create files when asked, not speculatively. If a plan calls for 14 files, don't create all 14 in one session unless explicitly asked.
+## Update SESSION.md and memory/ at end of every session
+SESSION.md = single source of truth for current state. Memory files = context for next session.
+**Why:** User instruction: "update sessions n memory md files."
 
-**Why:** Each file needs to be reviewed. Unreviewed files accumulate debt.
+## Standing session instructions live in CLAUDE.md
+CLAUDE.md is auto-loaded by Claude Code. If user adds a new standing instruction, add it to CLAUDE.md + memory/feedback_style.md immediately.
+**Why:** User: "add set of instructions prompts so that you can start your next sessions without repeating prompts."
 
-## Parallel When Independent
-When multiple independent tasks, run them in parallel (parallel Bash calls, parallel Agent launches). Don't serialize work that can overlap.
+## Comprehensive over quick for documentation tasks
+Go deep when the task is docs, analysis, or prompts. Be terse for file edits and git ops.
+**Why:** User accepted and built on thorough outputs (1,477-line arch.md, 912-line lesson_plan.md).
 
-## Session Files Travel With Repo
-Memory files live in `memory/` in the repo AND in the Claude memory system. Always update both.
-SESSION.md must reflect the true current state after every push — it's the single source of truth for "where are we?"
+## Stop when asked — do not finish speculative work
+"stop" = commit what exists and end. Do not add "one more thing."
+**Why:** Sessions are deliberate. Over-generating creates review debt.

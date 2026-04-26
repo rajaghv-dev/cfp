@@ -1,35 +1,40 @@
 ---
 name: Raja — User Profile
-description: Technical background, hardware, working style, preferences
+description: Technical background, working style, collaboration preferences
 type: user
 ---
 
-## Hardware
-- RTX 4090 24 GB VRAM — Workstation A (primary inference, tool calling tier 3)
-- RTX 3080 16 GB VRAM — Workstation B (tiers 1–2, embeddings)
-- DGX Station ~256 GB GPU — 8× A100 (tier 4 overnight batch, ontology)
-- All machines run Ollama daemons, addressed via OLLAMA_HOSTS in config.py
-
-## Technical Depth
-Comfortable with: PostgreSQL internals, graph databases (Apache AGE, Neo4j), LLM pipeline design, ontology engineering (OWL, RDF, SPARQL), distributed systems, Python, Docker, Linux kernel/systems.
-
-Not afraid to ask "why not X?" — expects honest first-principles tradeoff analysis, not validation.
+## Background
+Building a conference knowledge pipeline (WikiCFP + LLM classification + knowledge graph).
+Technically capable and ambitious. Comfortable directing architecture and reading dense documentation.
+Actively learning many specific technologies (pgvector, Apache AGE, Kubernetes, LLM prompting) as the project evolves — requested a 14-module lesson_plan.md to understand every technology from scratch.
 
 ## Working Style
-- Builds systems across multiple sessions; uses MD files to preserve context between sessions
-- Designs architecture first (context.md, codegen/ specs), implements later with Sonnet
-- Likes deep reasoning discussions ("think and reason it well" = go first-principles)
-- Stops sessions deliberately: "stop" means push what exists and end cleanly
-- Runs shell in WSL2 (Linux 6.6.87 on Windows), bash shell
+- Gives high-level direction ("improve the prompts", "identify gaps", "update github") and trusts Claude to know what that means in full context of all the files
+- Expects standing instructions to be remembered across sessions — CLAUDE.md exists for this reason
+- Uses short, directive messages; does not over-specify; expects Claude to read context files first
+- Says "stop" deliberately — means commit what exists and end cleanly, do not finish speculative work
+- Asks "what's the todo list now?" or "what's your priority list?" to recalibrate direction
+- Prefers comprehensive, well-structured documentation over quick drafts
+- Wants all memory/context in the repo — nothing left only on a local machine
 
-## Repo Preferences
-- Short lowercase repo names (wiki-cfp → cfp)
-- GitHub username: rajaghv-dev
-- Email: rajaghv.dev@gmail.com
-- Prefers `gh` CLI for GitHub operations (authenticated)
+## Technical Depth
+Comfortable with: Python, PostgreSQL, Docker, Linux (WSL2), graph databases, LLM pipeline design.
+Learning: Apache AGE Cypher, pgvector internals, Kubernetes, async Python.
+Expects honest first-principles tradeoff analysis — not validation of choices.
+
+## Environment
+- Shell: bash in WSL2 (Linux 6.6.87 on Windows)
+- GitHub username: rajaghv-dev | Email: rajaghv.dev@gmail.com
+- Repo: https://github.com/rajaghv-dev/cfp
 
 ## Communication Preferences
-- Concise updates while working (one sentence)
-- Deep explanations when explicitly asked
-- No unsolicited refactoring or feature additions
-- No trailing summaries of what was just done
+- Concise updates while working (one sentence per key event)
+- Deep explanations when explicitly asked ("justify", "usefulness", "strategy")
+- No trailing summaries of what was just done — Raja reads diffs
+- No unsolicited refactoring, features, or file creation beyond the task
+- Parallel tool calls when tasks are independent
+
+## Model Preferences
+- Opus for: deep architectural analysis, prompt engineering, lesson content, trade-off evaluation
+- Sonnet for: file edits, git ops, quick lookups, SESSION.md updates

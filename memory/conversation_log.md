@@ -1,77 +1,67 @@
 ---
-name: Conversation log — key decisions and context
-description: Running log of topics covered and decisions made across sessions
+name: Conversation log — key decisions per session
+description: Running log of what changed and why each session
 type: project
 ---
 
 ## Session 1 — 2026-04-25
 
 ### Started with
-WikiCFP scraper repo (`wiki-cfp`) — basic Python scraper with BS4, generate_md.py for Markdown reports.
+Basic WikiCFP scraper repo (`wiki-cfp`) — BS4 scraper + generate_md.py for Markdown reports.
 
-### Decisions made (in order)
+### Key decisions
+- PostgreSQL + pgvector + Apache AGE chosen (only stack unifying vector+graph+relational in one query)
+- DuckDB demoted to analytics-only (postgres_scanner, no storage)
+- Redis for queue + rate limiting only (zero business data)
+- Qwen3 for ALL tool calling; DeepSeek-R1 for pure reasoning
+- 4-tier cascade: 4b→14b→32b→70b, confidence-gated escalation
+- People, Venues, Orgs as first-class graph nodes
+- Ontology: bottom-up from raw_tags, AGE IS the live ontology
+- conf-scr-org-syn patterns analysed and documented in codegen/ specs
+- Repo renamed: wiki-cfp → cfp
 
-**Scraping:**
-- WikiCFP has no API — HTML scraping only
-- Crawl delay: min 5s, human-like Gaussian timing
-- Dedup key: WikiCFP `eventid=N` (globally unique per edition)
-- Pagination: WikiCFP uses `?conference=X&page=N`
-- Series index: `/cfp/series?t=c&i=A` through Z (~3000+ series)
+### Files created
+context.md (19 sections), prompts.md (7 prompts), SESSION.md, setup.sh, memory/, codegen/01,04,05,09,11
 
-**Models (after deep hardware discussion):**
-- Hardware: RTX 4090 (24 GB), RTX 3080 (16 GB), DGX (256 GB)
-- Qwen3 chosen for ALL tool calling (only reliable Ollama family, April 2025)
-- DeepSeek-R1 for pure reasoning (best accuracy, no tool overhead)
-- Phi-4-reasoning rejected: does NOT support tool calling
-- Mistral-NeMo:12b for long-context HTML (128k window)
-- 4-tier pipeline designed: 4b→14b→32b→70b, route by confidence
+---
 
-**Database (after pgvector discussion):**
-- Rejected DuckDB+LanceDB+Qdrant (fragmented, no cross-modal queries)
-- Rejected Neo4j (no vectors, no SQL)
-- Chose PostgreSQL + pgvector + Apache AGE
-  - Only stack that unifies vector+graph+relational in ONE query
-  - DuckDB demoted to analytics-only layer (postgres_scanner, no storage)
-  - Redis kept for queue + rate limiting only
-- This decision driven by user's request to capture people, PC chairs, venues as first-class entities
+## Session 2 — 2026-04-26
 
-**Knowledge graph:**
-- People (PC chairs, general chairs, keynote speakers), Venues, Organisations, Cities, Countries all become graph nodes
-- Ontology concepts (MachineLearning, VLSI, etc.) as nodes with IS_A/PART_OF/RELATED_TO edges
-- Example cross-modal query: pgvector similarity + AGE graph traversal + SQL filter in one statement
-- AGE graph IS the live ontology; owlready2/rdflib = export-only for Protégé
+### Major architectural change
+**Multi-machine → single-machine + GCS**
+- Old: RTX 3080 + RTX 4090 + DGX running concurrently, OLLAMA_HOSTS routing dict
+- New: any single machine, WCFP_MACHINE profile, single OLLAMA_HOST=localhost
+- GCS = off-machine persistence (pg_dump + rclone)
+- Machine lifecycle: pull → restore → run → sync → wipe
 
-**Ontology learning:**
-- This project is a natural exercise in ontology engineering
-- WikiCFP `Categories:` tags = raw concept candidates
-- Pipeline: Tier1 extracts→Tier2 clusters synonyms→Tier3 infers IS_A→Tier4 validates
-- Tools: owlready2 (installed), rdflib (installed), Protégé for visualization
+### Arch docs overhauled
+- context.md: §2 (hardware → single-machine profiles), §3 (GCS layer added), §9 (model roster simplified), §12 (config simplified), §15 (install updated), new §18 (machine lifecycle), new §19 (open questions), new §20 (risks)
+- arch.md created (1,477 lines): 15 open questions, 18 risks, 8 ADRs, 15 suggestions, K8s spec, v1/v2 scope split
+- CLAUDE.md created (78 lines): standing session instructions
 
-**conf-scr-org-syn analysis:**
-- Repo: https://github.com/rajaghv-dev/conf-scr-org-syn
-- Key patterns extracted: `_is_english()`, `_safe_parse_date()`, abstract+paper deadline regex, COALESCE upsert, `_parse_json_response()` 3-level fallback, `_strip_thinking()`, `slug` property, `to_markdown()`, `## Notes` preservation, `scrape_ai_deadlines()` YAML
-- All patterns documented in `codegen/` specs
-- Source repo to be deleted after merge into wcfp/ package
+### Prompts overhauled (Sonnet then Opus deep rewrite)
+- 12 prompts total (was 7): TIER1–4, DEDUP, ONTOLOGY_SYNONYM, ONTOLOGY_ISA, PERSON_EXTRACT, VENUE_EXTRACT, QUALITY_GUARD, SERIES_EXTRACT, ORG_EXTRACT, DEADLINE_CHANGE
+- New fields: paper_deadline (renamed from deadline), abstract_deadline, is_workshop, submission_system, sponsor_names, description, rank
+- New parsers added: EDAS, EasyChair, HotCRP, CMT, OpenReview
 
-**Repo rename:** wiki-cfp → cfp (GitHub: rajaghv-dev/cfp)
+### lesson_plan.md created (912 lines)
+14 modules: PostgreSQL, pgvector, Apache AGE, DuckDB, Redis, LLM concepts, 4-tier pipeline, ontology, scraping, dedup, GCS lifecycle, Kubernetes, observability + A–Z glossary
 
-**Files created:**
-- `context.md` (19-section architecture spec, Opus-reviewed)
-- `prompts.md` (search queries + A–Z series index + 7 LLM prompts)
-- `SESSION.md` (session continuity)
-- `setup.sh` (clone + venv + pip + Ollama pull)
-- `memory/` (this directory)
-- `codegen/00-05, 09, 11` (partial implementation specs)
-- Existing: `scraper.py`, `generate_md.py`, `data/latest.json`, `reports/*.md`
+### Gap audit (Opus)
+Stale codegen specs fixed: 01 (single OLLAMA_HOST, paper_deadline, is_workshop, sponsor_names), 05 (new columns, scrape_sessions table), 09 (OLLAMA_HOST import)
+.env.example created
+v1 scope formally defined in arch.md §6: Tiers 1+2, pgvector only, pgvector-only dedup, no DuckDB, no AGE
 
-### Open topics (not yet addressed in code)
-- Terminology lesson plan requested — not yet created
-- Tool calling with web/external sites — discussed but not implemented
-- conf-scr-org-syn merge — planned in codegen/ but not implemented
-- wcfp/ package — entirely missing, needs codegen/02,03,06-08,10,12-14 first
-- docker-compose.yml, Makefile, AGENTS.md, PATTERNS.md — not created
+### Kubernetes analysis
+Full K8s architecture in arch.md §5: node pools, KEDA scaling, Workload Identity, ~$85/mo on GKE
+Decision: Docker Compose for v1, K8s manifests written alongside for v2
 
-### Next session task
-1. Create remaining codegen specs (02, 03, 06–08, 10, 12–14)
-2. Implement wcfp/ package using codegen/ specs as prompts for Sonnet
-3. Delete scraper.py after wcfp/parsers/wikicfp.py works
+### Ontology confirmed as v2 feature
+Strategy fully designed (context.md §14, prompts ONTOLOGY_SYNONYM + ISA + TIER4)
+Seed file (ontology/seed_concepts.json) identified as missing piece to create before v2
+
+### Priority to-do list compiled
+P0 (Q10/Q12/Q14 blockers) → P1 (missing specs) → P2 (patch stale specs) → P3 (ontology seed) → P4 (v1 impl) → P5 (validation) → P6 (enhancements) → P7 (v2)
+
+### Memory unified into repo
+All memory files moved to memory/ in the repo. Local .claude/ memory mirrors repo.

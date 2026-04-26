@@ -127,42 +127,71 @@ Full question details + recommended answers: `arch.md §1`
 
 ---
 
-## Next Steps (in order)
+## Priority To-Do List
 
-**Build v1 first.** v1 scope is defined in `arch.md §6` — Tiers 1+2 only,
-PostgreSQL+pgvector only (no AGE), pgvector-cosine dedup only (no DeepSeek-R1
-confirmation), direct PG queries (no DuckDB), WikiCFP + ai-deadlines only.
-v2 components (AGE, Tier 3+4, ontology, DuckDB) are an additive migration
-post-v1.
+> Full detail in `memory/project_cfp.md`. Summary here for quick reference.
 
-1. **Resolve remaining blocking arch questions** (Q10, Q12, Q14 hit v1).
-   Q4 / Q6 / Q15 belong to v2 modules — defer.
-2. **Write missing codegen specs for v1 modules** (02, 03, 07, 08, 13, 15, 16).
-   v2-only specs (06 graph, 10 tier3/4, 17 ontology) deferred.
-3. **Implement v1 in dependency order** (see below).
-4. **Delete `scraper.py`** after `wcfp/parsers/wikicfp.py` is verified working.
-5. **Run v1 weekly for a month** with real data before designing v2.
+### P0 — Blockers (resolve before any code)
+- [ ] **Q10** — Ollama model storage: named Docker volume vs re-pull → blocks `docker-compose.yml`
+- [ ] **Q12** — JSON-mode failure retry budget → blocks `wcfp/llm/client.py`
+- [ ] **Q14** — Quantisation policy per PROFILE_MODELS → blocks `config.py` values
+Full answers + recommendations: `arch.md §1`
 
-### Implementation order
+### P1 — Write missing v1 codegen specs
+- [ ] `codegen/02` — `wcfp/prompts_parser.py`
+- [ ] `codegen/03` — `wcfp/fetch.py` (aiohttp, not requests — arch.md S13)
+- [ ] `codegen/07` — `wcfp/queue.py` (Redis)
+- [ ] `codegen/08` — `wcfp/vectors.py` + `wcfp/embed.py`
+- [ ] `codegen/13` — `docker-compose.yml` (`pgvector/pgvector:pg16`) + `Makefile`
+- [ ] `codegen/15` — `wcfp/dedup.py` (pgvector-only for v1)
+- [ ] `codegen/16` — `wcfp/sync.py` (GCS pull/push)
+- [ ] `codegen/10` — `wcfp/llm/tier1.py` + `tier2.py`
+- [ ] `codegen/12` — `wcfp/pipeline.py` + `wcfp/cli.py`
+
+### P2 — Patch stale written specs
+- [ ] Spec 04: rename `Event(deadline=…)` → `Event(paper_deadline=…)` throughout
+- [ ] Spec 11: rename `deadline::VARCHAR` → `paper_deadline::VARCHAR` in SQL
+
+### P3 — Ontology seed (small, hand-authored)
+- [ ] Create `ontology/seed_concepts.json` (13 Category values + ~50 subconcepts)
+- [ ] Add `bootstrap-ontology` CLI command to spec 12
+
+### P4 — Implement v1 (strict dependency order)
 ```
-config.py + wcfp/models.py          ← spec 01  ← start here
-wcfp/prompts_parser.py              ← spec 02
-wcfp/fetch.py                       ← spec 03
-wcfp/parsers/ (wikicfp + ai_deadlines) ← spec 04
-wcfp/db.py                          ← spec 05
-wcfp/graph.py                       ← spec 06  (needs Q4 resolved)
-wcfp/queue.py                       ← spec 07
-wcfp/vectors.py + wcfp/embed.py     ← spec 08
-wcfp/llm/client.py + tools.py       ← spec 09
-wcfp/llm/tier1..4.py               ← spec 10
-wcfp/analytics.py + generate_md.py ← spec 11
-wcfp/dedup.py                       ← spec 15  (needs Q6 resolved)
-wcfp/sync.py                        ← spec 16
-wcfp/ontology.py                    ← spec 17
-wcfp/pipeline.py + wcfp/cli.py     ← spec 12
-setup.sh + docker-compose + Makefile ← spec 13
-AGENTS.md + PATTERNS.md             ← spec 14
+spec 01  config.py + wcfp/models.py          ← START HERE
+spec 02  wcfp/prompts_parser.py
+spec 03  wcfp/fetch.py
+spec 04  wcfp/parsers/wikicfp.py + ai_deadlines.py
+spec 05  wcfp/db.py
+spec 07  wcfp/queue.py
+spec 08  wcfp/vectors.py + wcfp/embed.py
+spec 09  wcfp/llm/client.py + tools.py
+spec 10  wcfp/llm/tier1.py + tier2.py
+spec 15  wcfp/dedup.py
+spec 16  wcfp/sync.py
+spec 12  wcfp/pipeline.py + wcfp/cli.py
+spec 13  docker-compose.yml + Makefile
+spec 11  wcfp/analytics.py + generate_md.py
+         → Delete scraper.py after parsers/wikicfp.py verified
 ```
+
+### P5 — v1 validation + completion
+- [ ] Run v1 weekly for 1 month with real data
+- [ ] lesson_plan.md Modules 14–21 (async, BS4, HTTP, date parsing, Docker, git, ethics, testing)
+- [ ] `tests/` directory with pytest fixtures from real WikiCFP HTML
+
+### P6 — Enhancements (post-v1)
+- [ ] Gmail integration (`wcfp/parsers/email_gmail.py`)
+- [ ] EDAS / EasyChair / OpenReview / HotCRP parsers
+- [ ] Health check FastAPI endpoint
+- [ ] Predatory publisher blocklist
+- [ ] Prometheus + Grafana observability
+
+### P7 — v2 (additive migration, no rewrites)
+- [ ] Switch Docker image → `apache/age:PG16_latest`, implement `wcfp/graph.py`
+- [ ] Tier 3 + 4, DeepSeek-R1 dedup confirmation
+- [ ] DuckDB analytics layer, ontology pipeline (`wcfp/ontology.py`)
+- [ ] Kubernetes manifests (`arch.md §5` — ~$85/mo on GKE)
 
 ### Enhancements (after v1 ships)
 - Gmail integration (`wcfp/parsers/email_gmail.py`)
