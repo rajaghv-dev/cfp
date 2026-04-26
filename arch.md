@@ -1048,6 +1048,81 @@ list. Single import, periodic refresh (yearly).
 
 ---
 
+## S13. Async HTTP in fetch.py (MVP for v1.1)
+
+**What.** Replace the synchronous `requests` calls in `wcfp/fetch.py` with
+`aiohttp` + `asyncio`. The module already lives behind a `with_retry`
+decorator and a `human_delay` rate limiter — neither needs to change shape.
+
+**Why.** The scraper is overwhelmingly I/O-bound: each WikiCFP page request
+spends ~200–600 ms waiting for bytes, then ~5–10 ms parsing. With sync
+`requests` we are idle 95% of the wall clock. With `aiohttp` we can have
+5–10 HTTP requests in flight per worker while still respecting per-domain
+rate limits (Redis SETNX is the gate, and SETNX is global). Expected
+throughput gain on cold caches: **3–5×**.
+
+**Cost.** ~80 LOC change in `fetch.py`. The Redis rate limiter is
+synchronous today; switch to `redis.asyncio.Redis` in queue.py at the same
+time. Tests need `pytest-asyncio`.
+
+**When.** v1 ships sync; v1.1 swap. Don't gold-plate v1 with async if a
+weekly overnight WikiCFP crawl is good enough.
+
+---
+
+## S14. Batch embeddings (MVP)
+
+**What.** Replace per-conference `ollama.embeddings(model="nomic-embed-text",
+prompt=...)` calls with a single batched call passing 32–64 prompts in one
+request.
+
+**Why.** Each Ollama embedding call has ~30 ms of fixed overhead
+(HTTP + tokenizer warmup) on top of the actual embedding compute (~5 ms for
+nomic-embed-text on a single GPU). At one-call-per-record, fixed overhead
+dominates at ~85% of wall-clock. Batching to 32–64 prompts amortises that
+fixed cost across the batch. Expected throughput gain on embedding
+generation: **10–20×**.
+
+**Cost.** Trivial — ~30 LOC in `embed.py`. The Ollama Python SDK already
+accepts a list-of-prompts payload (`ollama.embed(model=..., input=[...])`
+in newer versions). Embedding a 50k-record corpus drops from ~30 min to
+~2 min on `gpu_mid`.
+
+**When.** MVP. No reason to ship one-at-a-time.
+
+---
+
+## S15. `--workers N` flag for parallel pipeline workers (Later)
+
+**What.** Add `--workers N` to `python -m wcfp run-pipeline`. The Redis
+inflight-lease design (`wcfp:inflight:{job_id}` with 600 s TTL) already
+supports N concurrent consumers — what's missing is the orchestrator that
+spawns N async tasks all dequeuing independently.
+
+**Why.** Today the pipeline is one process, one in-flight job at a time.
+With `--workers 4`, four async tasks dequeue and process in parallel. This
+is **not** the same as S13 — that's about concurrent HTTP from one worker;
+this is about multiple workers each doing their own thing. Expected
+throughput gain on scraping + Tier 1: **N×** (at the cost of N× LLM VRAM
+pressure on the local Ollama daemon — which can serialise model calls
+behind the scenes via its own queue).
+
+**Cost.** ~50 LOC in `pipeline.py` and `cli.py`. No changes to `queue.py`
+because the dequeue API is already idempotent. The Redis rate limiter and
+inflight lease handle correctness; the orchestrator is just `asyncio.gather(
+[worker(i) for i in range(N)])`.
+
+**Caveat.** Per-domain rate limit is still global (Redis SETNX), so
+`--workers 4` does NOT mean `4× requests-per-second to wikicfp.com` — it
+means 4 workers all queue up and wait their turn for the same domain. The
+gain manifests when the corpus contains many domains (Tier 3 external
+follows).
+
+**When.** Later. Ship single-worker first; add when the run takes longer
+than overnight.
+
+---
+
 # Section 5 — Kubernetes Architecture (Future Target)
 
 This section sketches the GKE deployment that preserves the pull→run→wipe
@@ -1208,3 +1283,195 @@ additional questions emerged during this review:
   flag is ambiguous. Pick one (recommend the flag).
 
 These are folded into Section 1 with full analysis.
+
+---
+
+# Section 6 — v1 vs v2 Scope Split
+
+This section is the most important simplification deliverable. The full spec
+in `context.md` describes the **v2** target: AGE knowledge graph, four-tier
+LLM cascade, ontology pipeline, DuckDB analytics. v2 is what we want
+eventually. v1 is what ships. v1 is **deliberately smaller** — it carries
+real CFP scraping, dedup, and reports end-to-end without standing up the
+graph database, the 70 b model, or the OWL exporter.
+
+The discipline here: every v2-only component has been removed from v1's
+critical path. None of the v1 modules import a v2 module. The migration
+from v1 to v2 is additive — new tables, new modules, new Docker image —
+not a rewrite.
+
+## 6.1 v1 (ship this)
+
+**Constraints met by v1.**
+- Every dependency is resolvable with stock `pip install` and `docker pull`.
+- No Apache AGE (so no third-party PG extension version-skew risk).
+- No deepseek-r1:70b (so any `gpu_mid` machine can run the whole pipeline).
+- No ontology pipeline (so no owlready2 / rdflib / Protege complexity).
+- Single `make run` command runs the whole lifecycle.
+
+**LLM tiers.** Tiers 1 + 2 only.
+- Tier 1: `qwen3:4b` triage (PROMPT_TIER1)
+- Tier 2: `qwen3:14b` extraction (PROMPT_TIER2 + PROMPT_PERSON_EXTRACT +
+  PROMPT_VENUE_EXTRACT + PROMPT_QUALITY_GUARD)
+- Tier 3 escalations land in `wcfp:dead` for manual review or v2.
+- Tier 4 escalations also land in `wcfp:dead` — the queue accumulates
+  until v2 ships and DGX/Tier-4-cloud drains it.
+
+**Database.** PostgreSQL 16 + pgvector, **no AGE**. Relational tables only.
+Apache AGE was only needed for the live ontology graph; deferring the
+ontology pipeline (below) means deferring AGE entirely. The Docker image
+becomes `pgvector/pgvector:pg16` (official, well-maintained, just PG16 +
+pgvector). The init_db() function drops the `LOAD 'age'` /
+`create_graph('wcfp_graph')` lines.
+
+**Queue.** Redis 7 + scraper as specified. No change.
+
+**Embeddings.** `nomic-embed-text` via Ollama as specified. No change.
+
+**Dedup.** **pgvector cosine threshold only.** No DeepSeek-R1 confirmation.
+The synchronous high-threshold check (cosine ≥ `DEDUP_AUTO_MERGE = 0.97`)
+skips the write — that's the whole dedup logic for v1. Records in the
+0.92–0.97 band are written but flagged for nightly review (a CSV dump from
+the `dedup-sweep` command, viewed manually). Empirically, predictive
+recall at 0.97 is ~95%; the missed 5% become low-priority cleanup, not
+correctness blockers.
+
+**Quality gate.** `PROMPT_QUALITY_GUARD` runs before every Tier 2 write
+and is the **only** way records land in the database. severity=block goes
+to dead-letter; severity=warn writes with `quality_severity='warn'` and
+the `quality_flags` array populated.
+
+**Reports.** **Direct PostgreSQL queries** in `generate_md.py`. No DuckDB
+dependency for v1 — the queries are simple `SELECT … GROUP BY country` that
+PG handles in milliseconds at 50k-record scale. DuckDB joins via
+`postgres_scanner` is a v2 optimisation, not a correctness need.
+
+**Sources.** WikiCFP + ai-deadlines parsers only. EDAS / EasyChair /
+OpenReview / HotCRP / IEEE / ACM parsers are stubs that raise
+`NotImplementedError`. Tier 3 (which is where they'd be called from) is
+disabled.
+
+**Storage.** GCS sync via `pg_dump` + `rclone`. No change from context.md §18.
+
+**Lifecycle.** `make run` (or `bash run.sh`) does:
+```
+docker compose up -d
+rclone copy gcs:wcfp-data/prod/pg_backup ./data/pg_backup
+pg_restore -d wikicfp ./data/pg_backup/latest.dump
+ollama pull qwen3:4b qwen3:14b nomic-embed-text
+python -m wcfp init-db
+python -m wcfp enqueue-seeds
+python -m wcfp run-pipeline
+python -m wcfp generate-reports
+python -m wcfp sync-push
+```
+Single command. ~90 minutes wall clock for a steady-state run.
+
+**docker-compose.yml for v1.** Replace `apache/age:PG16_latest` with
+`pgvector/pgvector:pg16`. Two containers: PG16 + pgvector + Redis. The
+init_db() command drops AGE setup. No third-party extension to version-pin.
+
+**requirements.txt for v1.** Drop:
+- `owlready2` (ontology export — deferred to v2)
+- `rdflib`    (ontology export — deferred to v2)
+- `google-cloud-storage` (rclone handles GCS via OAuth; the SDK is only
+  needed if we ever bypass rclone — not in v1)
+
+Keep: `psycopg[binary]>=3.1`, `duckdb>=1.0` (v2 will use it; pinning now
+keeps requirements stable), `redis>=5.0`, `ollama>=0.3`, `beautifulsoup4>=4.12`,
+`lxml>=5.0`, `requests>=2.32`, `tiktoken>=0.7`, `pandas>=2.0`, `pyyaml>=6.0`.
+
+**v1 module list — what gets implemented:**
+```
+config.py
+wcfp/__init__.py
+wcfp/models.py
+wcfp/prompts_parser.py
+wcfp/fetch.py
+wcfp/parsers/__init__.py
+wcfp/parsers/wikicfp.py
+wcfp/parsers/ai_deadlines.py
+wcfp/db.py
+wcfp/vectors.py            (pgvector upsert + ANN; no AGE references)
+wcfp/embed.py              (nomic-embed-text; batched per S14)
+wcfp/llm/__init__.py
+wcfp/llm/client.py
+wcfp/llm/tier1.py
+wcfp/llm/tier2.py
+wcfp/dedup.py              (pgvector threshold only — no LLM confirmation)
+wcfp/sync.py
+wcfp/pipeline.py
+wcfp/cli.py
+generate_md.py             (direct PG queries — no DuckDB)
+```
+
+**v1 NOT implemented:**
+- `wcfp/graph.py` (Apache AGE)
+- `wcfp/llm/tier3.py`, `wcfp/llm/tier4.py`
+- `wcfp/llm/tools.py` (no Tier 3 → no tool calling needed)
+- `wcfp/ontology.py`
+- `wcfp/analytics.py` (DuckDB layer)
+- All non-WikiCFP / non-ai-deadlines parsers
+
+## 6.2 v2 (add after v1 ships with real data)
+
+The ordering is roughly low-to-high risk:
+
+1. **Apache AGE knowledge graph.** Switch the Docker image from
+   `pgvector/pgvector:pg16` to `apache/age:PG16_latest`. Add the AGE
+   extension setup to `init_db()`. Implement `wcfp/graph.py` with the sync
+   logic from context.md §13. Run `graph rebuild` to populate AGE from the
+   relational tables (Q4 ADR — relational is canonical, AGE is derived).
+2. **Tier 3 (qwen3:32b tool-calling).** Implement `wcfp/llm/tier3.py` and
+   `wcfp/llm/tools.py`. Re-enable Tier 3 in `pipeline.py`. This is what
+   handles unknown external sites (IEEE, ACM, conference homepages).
+3. **Tier 4 (deepseek-r1:70b overnight batch).** Implement
+   `wcfp/llm/tier4.py`. Add the `tier4-batch` CLI command. Drains
+   `wcfp:dead` and `wcfp:escalate:tier4` on a DGX (or via `tier4-cloud`).
+4. **DeepSeek-R1 dedup confirmation.** Add the LLM call to `wcfp/dedup.py`
+   for records in the 0.92–0.97 band. Replaces the v1 manual review path.
+5. **Ontology pipeline.** Implement `wcfp/ontology.py` with the
+   AGE→owlready2→.owl export. Bootstrap with the 13 Category enum values
+   as root Concept nodes (arch.md §1 Q3).
+6. **DuckDB analytics.** Implement `wcfp/analytics.py`. Move all reporting
+   queries from `generate_md.py` to DuckDB via `postgres_scanner`.
+7. **Additional parsers.** EDAS, EasyChair, OpenReview, HotCRP, IEEE, ACM,
+   Springer, USENIX. Each becomes a separate file in `wcfp/parsers/`.
+8. **Gmail parser** (`wcfp/parsers/email_gmail.py`) for direct CFP emails.
+9. **Kubernetes migration.** As specified in Section 5.
+
+## 6.3 What does NOT change between v1 and v2
+
+The following stay identical — that's why this is an additive migration,
+not a rewrite:
+- `prompts.md` (v2 just enables more of it)
+- `wcfp/models.py` (Event already has all v2 fields)
+- `wcfp/db.py` (the schema is the v2 superset; AGE setup is in an `if`)
+- `wcfp/parsers/wikicfp.py` (parser doesn't care about tier count)
+- `wcfp/fetch.py` and `wcfp/queue.py` (queue / rate-limit infra)
+- `wcfp/embed.py` (embedding model is the same in v1 and v2)
+- `wcfp/sync.py` (GCS push/pull is unchanged)
+
+In practice this means: ship v1, run it weekly for a month or two, observe
+real failure modes on real data, **then** decide whether v2 components are
+worth their cost. Several may turn out to be unnecessary — for example, if
+WikiCFP + ai-deadlines together cover 95% of the relevant conferences,
+there is no urgent reason to add IEEE / ACM parsers, and Tier 3 (which
+exists primarily to scrape unknown external sites) becomes optional.
+
+## 6.4 Why v1 is sufficient on its own
+
+The original spec aims at the "knowledge graph + ontology + 4-tier LLM"
+target. That's the right destination. But the path between zero code and
+that target is long, and most of the value-per-line-of-code lives in the
+first 30%:
+
+- WikiCFP scraping with rule-based BS4 → 80% of records resolved for free.
+- Tier 1 + Tier 2 LLM → another ~15% (categorisation + extraction).
+- pgvector dedup → catches the obvious duplicates.
+- PROMPT_QUALITY_GUARD → keeps predatory listings out of reports.
+- Direct PG queries → reports work.
+
+That's a complete pipeline. v2 components add precision and breadth but
+not correctness — v1 with real data running for a month tells us whether
+v2 is worth the engineering.

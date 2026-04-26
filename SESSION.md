@@ -82,14 +82,14 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | `setup.sh` | — | Clone + venv + pip + optional Ollama pull |
 
 ### Codegen specs (written — no implementation yet)
-| File | Covers |
-|---|---|
-| `codegen/00_HOWTO.md` | How to use the codegen files |
-| `codegen/01_config_models.md` | `config.py` + `wcfp/models.py` |
-| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` |
-| `codegen/05_db_schema.md` | `wcfp/db.py` |
-| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` |
-| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` |
+| File | Covers | Last reviewed |
+|---|---|---|
+| `codegen/00_HOWTO.md` | How to use the codegen files | — |
+| `codegen/01_config_models.md` | `config.py` + `wcfp/models.py` | 2026-04-26 (gap audit: OLLAMA_HOST single, paper_deadline, is_workshop, sponsor_names, scrape_session_id, PersonRole.ORGANIZER/OTHER, OrgType.OTHER) |
+| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` | — (note: still emits `Event(deadline=…)` — must rename to `paper_deadline` at implementation time) |
+| `codegen/05_db_schema.md` | `wcfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, quality_severity, scrape_sessions table + FK, sites.last_cursor, COALESCE policy split) |
+| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: OLLAMA_HOST/PROFILE_MODELS imports, single-host OllamaClient, get_available_models, profile_intersection) |
+| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` | — (note: SELECT still references `deadline::VARCHAR` — must update to `paper_deadline::VARCHAR`) |
 
 ### Codegen specs — NOT YET WRITTEN
 | Spec | Module |
@@ -114,14 +114,14 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 
 ## Blocking Arch Questions (must resolve before coding these modules)
 
-| Question | Blocks |
-|---|---|
-| Q4 — AGE consistency (derived tables vs authoritative) | `wcfp/graph.py` |
-| Q6 — Cross-source dedup trigger timing | `wcfp/dedup.py` |
-| Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` |
-| Q12 — JSON-mode failure retry budget | `wcfp/llm/client.py` |
-| Q14 — Quantisation policy per WCFP_MACHINE profile | `config.py` |
-| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` |
+| Question | Blocks | Status |
+|---|---|---|
+| Q4 — AGE consistency (derived tables vs authoritative) | `wcfp/graph.py` | open (v2) |
+| Q6 — Cross-source dedup trigger timing | `wcfp/dedup.py` | open (v2 needs LLM confirmation; v1 uses pgvector-only) |
+| Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` | open |
+| Q12 — JSON-mode failure retry budget | `wcfp/llm/client.py` | open |
+| Q14 — Quantisation policy per WCFP_MACHINE profile | `config.py` | open |
+| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` | **PARTIALLY RESOLVED** — `is_workshop=True` flag is now on `Event`; standalone `Workshop` graph node will be dropped from `context.md §5` when v2 graph spec is finalised |
 
 Full question details + recommended answers: `arch.md §1`
 
@@ -129,10 +129,19 @@ Full question details + recommended answers: `arch.md §1`
 
 ## Next Steps (in order)
 
-1. **Resolve blocking arch questions** (Q4, Q15 first — both hit `wcfp/models.py`)
-2. **Write missing codegen specs** (02, 03, 06, 07, 08, 10, 12, 13, 14, 15, 16, 17)
-3. **Implement in dependency order** (see below)
-4. **Delete `scraper.py`** after `wcfp/parsers/wikicfp.py` is verified working
+**Build v1 first.** v1 scope is defined in `arch.md §6` — Tiers 1+2 only,
+PostgreSQL+pgvector only (no AGE), pgvector-cosine dedup only (no DeepSeek-R1
+confirmation), direct PG queries (no DuckDB), WikiCFP + ai-deadlines only.
+v2 components (AGE, Tier 3+4, ontology, DuckDB) are an additive migration
+post-v1.
+
+1. **Resolve remaining blocking arch questions** (Q10, Q12, Q14 hit v1).
+   Q4 / Q6 / Q15 belong to v2 modules — defer.
+2. **Write missing codegen specs for v1 modules** (02, 03, 07, 08, 13, 15, 16).
+   v2-only specs (06 graph, 10 tier3/4, 17 ontology) deferred.
+3. **Implement v1 in dependency order** (see below).
+4. **Delete `scraper.py`** after `wcfp/parsers/wikicfp.py` is verified working.
+5. **Run v1 weekly for a month** with real data before designing v2.
 
 ### Implementation order
 ```
@@ -175,8 +184,10 @@ AGENTS.md + PATTERNS.md             ← spec 14
 5. Tool calling: Qwen3 ONLY. DeepSeek-R1 = pure reasoning, no tools
 6. WikiCFP paired-row parsing in `scraper.py` is CORRECT — copy verbatim to `wcfp/parsers/wikicfp.py`
 7. India state-wise location taxonomy in `generate_md.py` is CORRECT — copy verbatim
-8. COALESCE upsert: never overwrite notification, camera_ready, rank, notes with NULL
+8. COALESCE upsert: never overwrite notification, camera_ready, rank, notes, submission_system, sponsor_names, official_url, description with NULL. **Always overwrite** (direct update): paper_deadline, abstract_deadline, dates, location, quality_flags, quality_severity, scrape_session_id
 9. Crawl delays: min 5s, Gaussian(8, 2.5), 10% chance 15–45s pause
+10. **Canonical field name is `paper_deadline`** — not `deadline`. Used uniformly across `models.Event`, `events.paper_deadline` column, prompts.md, parsers, Markdown output. The legacy name `deadline` must not appear in new code.
+11. **Single Ollama daemon per machine** at `OLLAMA_HOST` — no per-model host routing. Tier escalation handles model availability via `PROFILE_MODELS[WCFP_MACHINE]`.
 
 ---
 

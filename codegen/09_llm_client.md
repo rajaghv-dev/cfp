@@ -7,8 +7,13 @@
 
 ## Imports
 ```python
-from config import OLLAMA_HOSTS, MODEL_HOST
+from config import OLLAMA_HOST, PROFILE_MODELS, WCFP_MACHINE, LONG_CONTEXT_TOKENS
 ```
+
+There is **one** Ollama daemon per machine (`OLLAMA_HOST`). The legacy
+`OLLAMA_HOSTS` dict and `MODEL_HOST` per-model routing are gone (see
+context.md §12 and arch.md §1 ADR-8). Tier escalation handles the case where
+the current machine lacks a model — see `get_available_models()` below.
 
 ---
 
@@ -87,21 +92,56 @@ def resolve_model(model: str | None) -> str:
 
 ---
 
-## Auto-detect LLM backend (adapted from conf-scr-org-syn)
+## Available-model probe (replaces _detect_default_host)
+
+The pipeline uses this at startup to decide which tiers to run locally and
+which to escalate to `wcfp:escalate:tier4`. The set must be the intersection
+of (a) models actually pulled into the local Ollama daemon and (b) the
+profile roster from `PROFILE_MODELS[WCFP_MACHINE]`.
 
 ```python
-import os, requests as _req
+import subprocess
 
-def _detect_default_host() -> str:
-    """Return name key from OLLAMA_HOSTS for the best available host."""
-    for host_name, url in OLLAMA_HOSTS.items():
-        try:
-            resp = _req.get(f"{url}/api/tags", timeout=2)
-            if resp.ok and resp.json().get("models"):
-                return host_name
-        except Exception:
-            continue
-    return "local"   # fallback to localhost
+def get_available_models() -> list[str]:
+    """
+    Return the list of Ollama models actually available on the local daemon.
+
+    Strategy: try the Ollama Python SDK first (fast, no subprocess fork);
+    fall back to `ollama list` via subprocess if the SDK is unreachable.
+    Returns model names like "qwen3:14b" (no quant suffix).
+    """
+    # Preferred: use the SDK
+    try:
+        from ollama import Client as _C
+        resp = _C(host=OLLAMA_HOST, timeout=5).list()
+        # SDK returns {"models": [{"name": "qwen3:14b", "size": ...}, ...]}
+        return [m["name"] for m in resp.get("models", [])]
+    except Exception:
+        pass
+    # Fallback: shell out to `ollama list`
+    try:
+        out = subprocess.check_output(
+            ["ollama", "list"], text=True, timeout=10
+        )
+        names: list[str] = []
+        for line in out.splitlines()[1:]:        # skip header
+            parts = line.split()
+            if parts:
+                names.append(parts[0])
+            return names
+    except Exception:
+        return []
+
+
+def profile_intersection() -> list[str]:
+    """
+    Return models that are BOTH (a) in the current WCFP_MACHINE profile and
+    (b) actually pulled on the local Ollama daemon. Tiers requiring any
+    other model must be skipped and their jobs pushed to wcfp:escalate:tier4.
+    """
+    needed = set(PROFILE_MODELS.get(WCFP_MACHINE, []))
+    have   = set(get_available_models())
+    return sorted(needed & have)
 ```
 
 ---
@@ -112,38 +152,34 @@ def _detect_default_host() -> str:
 from ollama import Client as OllamaSDKClient
 
 class OllamaClient:
-    """Multi-host Ollama client with tool-calling support."""
+    """Single-host Ollama client with tool-calling support.
 
-    def __init__(self) -> None:
-        self._clients: dict[str, OllamaSDKClient] = {
-            name: OllamaSDKClient(host=url, timeout=300)
-            for name, url in OLLAMA_HOSTS.items()
-        }
+    All requests go to OLLAMA_HOST. There is no per-model host routing —
+    the local daemon either has the model or it doesn't (see profile_intersection).
+    """
 
-    def _client_for(self, model: str) -> OllamaSDKClient:
-        host_name = MODEL_HOST.get(model, "local")
-        return self._clients[host_name]
+    def __init__(self, model: str) -> None:
+        self.model  = resolve_model(model)
+        self._sdk   = OllamaSDKClient(host=OLLAMA_HOST, timeout=300)
 
     def chat(
         self,
-        model: str,
         messages: list[dict],
         tools: list[dict] | None = None,
         format: str | None = None,      # "json" forces JSON output
         options: dict | None = None,
     ) -> str:
         """Send a chat request; return stripped text response."""
-        kw: dict = {"model": model, "messages": messages}
+        kw: dict = {"model": self.model, "messages": messages}
         if tools:   kw["tools"]   = tools
         if format:  kw["format"]  = format
         if options: kw["options"] = options
-        resp = self._client_for(model).chat(**kw)
+        resp = self._sdk.chat(**kw)
         raw = resp["message"]["content"]
         return _strip_thinking(raw)
 
     def chat_with_tools(
         self,
-        model: str,
         system: str,
         user: str,
         tools: list[dict],
@@ -162,9 +198,7 @@ class OllamaClient:
         ]
         trace = []
         for _ in range(max_iters):
-            resp = self._client_for(model).chat(
-                model=model, messages=messages, tools=tools
-            )
+            resp  = self._sdk.chat(model=self.model, messages=messages, tools=tools)
             msg   = resp["message"]
             messages.append(msg)
             calls = msg.get("tool_calls") or []
