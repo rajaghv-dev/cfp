@@ -334,27 +334,55 @@ PROMPT_TIER1: |
   You receive ONE record in the user message:
     {"acronym": str, "name": str, "raw_tags": [str], "snippet": str, "source_domain": str}
 
-  Decide:
-    1. is_cfp      — True if this is a real conference/workshop/symposium CFP.
-                     False for: journal-only calls, predatory listings, spam, tutorials.
-    2. is_workshop — True if this is a workshop or symposium co-located with a main conference.
-    3. categories  — zero or more from this EXACT set (multi-label is normal and expected):
+  The snippet may contain HTML entities (&amp; &nbsp; &#39;), unescaped unicode,
+  whitespace runs, or boilerplate like "Submission deadline:". Treat such noise
+  as cosmetic — extract meaning from the surrounding text and never let
+  garbled markup change your decision. Never copy snippet text into the output.
+
+  Decide each field strictly:
+    1. is_cfp      — True ONLY for a conference, workshop, symposium, or doctoral
+                     consortium that solicits paper submissions.
+                     False for: journal-only calls (CFP for special issue with no
+                     event), predatory listings, summer schools/tutorials with no
+                     paper track, generic course announcements, recruitment ads,
+                     book chapter calls.
+    2. is_workshop — True if the event is a workshop, symposium, or doctoral
+                     consortium typically co-located with a main conference.
+                     A standalone full conference is False.
+    3. categories  — Zero or more labels from this EXACT closed set
+                     (multi-label is normal; do NOT invent new labels;
+                     do NOT abbreviate differently; preserve casing exactly):
                      ["AI","ML","DevOps","Linux","ChipDesign","Math","Legal",
                       "ComputerScience","Security","Data","Networking",
                       "Robotics","Bioinformatics"]
-    4. is_virtual  — True only if the event is explicitly online-only.
-    5. confidence  — 0.0–1.0, your overall certainty.
+                     If nothing matches, return [] (empty array, not null).
+    4. is_virtual  — True ONLY when the event is explicitly described as fully
+                     online / virtual / remote-only. "Hybrid" is False.
+                     Unknown is False (not null).
+    5. confidence  — Float in [0.0, 1.0], your overall certainty across all
+                     four fields. Use < 0.85 when the snippet is too short,
+                     ambiguous, off-topic, or could plausibly be a journal CFP.
+                     Do not floor at 0.85 to avoid escalation; honesty is
+                     required — escalation is handled by the orchestrator.
 
-  Escalate condition (set by orchestrator, not you): confidence < 0.85.
-  Do NOT explain. Return EXACTLY:
-    {"is_cfp": bool, "is_workshop": bool, "categories": [str], "is_virtual": bool, "confidence": float}
+  Output rules:
+    - Return ONE JSON object, no prose, no code fences, no comments.
+    - Every key MUST be present. No extra keys.
+    - Types must match exactly: bool is true/false, not 1/0 or "true".
+    - Return EXACTLY:
+      {"is_cfp": bool, "is_workshop": bool, "categories": [str], "is_virtual": bool, "confidence": float}
 
 PROMPT_TIER2: |
   You are a structured-extraction model for academic CFPs. User message contains:
     {"html_text": str, "wikicfp_url": str, "tier1": {...}}
-  where html_text is cleaned text from a WikiCFP event-detail page or short external page.
+  where html_text is cleaned text from a WikiCFP event-detail page or a short
+  external conference page. The text MAY contain HTML entities, unicode dashes
+  (– — −), nbsp characters, multilingual content, or noisy whitespace. Normalise
+  silently; never copy markup into outputs.
 
-  Extract every field you can find. Return EXACTLY this JSON (null for unknown; never omit a key):
+  Extract every field you can find. Return EXACTLY this JSON object. Every key
+  MUST be present — emit null for unknown values, never omit a key, never add
+  extra keys, never wrap the object in another container:
     {
       "acronym":           str,
       "name":              str,
@@ -362,170 +390,497 @@ PROMPT_TIER2: |
       "is_workshop":       bool,
       "categories":        [str],
       "is_virtual":        bool,
-      "description":       str|null,         // 1-2 sentence scope summary
-      "rank":              str|null,         // CORE rank if stated: "A*"|"A"|"B"|"C"
+      "description":       str|null,
+      "rank":              str|null,
       "when_raw":          str|null,
       "start_date":        "YYYY-MM-DD"|null,
       "end_date":          "YYYY-MM-DD"|null,
       "where_raw":         str|null,
-      "country":           str|null,         // ISO-3166 alpha-2 e.g. "IN","US","DE"
-      "region":            str|null,         // "Asia"|"Europe"|"NorthAmerica"|"SouthAmerica"|"Africa"|"Oceania"|"MiddleEast"
-      "india_state":       str|null,         // only when country=="IN"
-      "abstract_deadline": "YYYY-MM-DD"|null,  // abstract/expression-of-interest deadline
-      "paper_deadline":    "YYYY-MM-DD"|null,  // full paper submission deadline
+      "country":           str|null,
+      "region":            str|null,
+      "india_state":       str|null,
+      "abstract_deadline": "YYYY-MM-DD"|null,
+      "paper_deadline":    "YYYY-MM-DD"|null,
       "notification":      "YYYY-MM-DD"|null,
       "camera_ready":      "YYYY-MM-DD"|null,
       "official_url":      str|null,
+      "submission_system": str|null,
+      "sponsor_names":     [str],
       "raw_tags":          [str],
       "confidence":        float
     }
 
-  Rules:
-    - Dates MUST be ISO-8601. Month+year only → use first day of month and lower confidence.
-    - country is ALWAYS ISO alpha-2, never the spelled-out name.
-    - is_virtual=true → country/region/india_state may be null.
-    - If only one deadline is shown with no qualifier, treat it as paper_deadline.
-    - Do not invent values. Unknown = null.
-    - confidence reflects the weakest extracted field.
+  Field semantics (read carefully):
+    - acronym: short uppercase identifier (e.g. "NeurIPS", "ICML"). Strip any
+      trailing year. If only the long name is given, derive a sensible acronym
+      from initials only when unambiguous; otherwise repeat the long name.
+    - name: the full conference / workshop name without the year suffix.
+    - edition_year: 4-digit year of THIS instance, integer (e.g. 2025).
+    - is_workshop: True for workshop/symposium/doctoral consortium; False for
+      a standalone main conference.
+    - categories: zero or more from the closed set
+      ["AI","ML","DevOps","Linux","ChipDesign","Math","Legal",
+       "ComputerScience","Security","Data","Networking","Robotics",
+       "Bioinformatics"]. Empty array [] if none. Never invent labels.
+    - is_virtual: True only when the page explicitly says fully online / virtual.
+      "Hybrid" is False. Unknown is False.
+    - description: 1–2 sentence scope summary in your own words (no markup).
+    - rank: CORE rank if explicitly stated on the page: one of "A*","A","B","C".
+      Never guess from prestige. Otherwise null.
+    - when_raw: the verbatim "When" / dates string from the page (trimmed).
+    - start_date / end_date: ISO-8601 "YYYY-MM-DD". If only month+year is given,
+      use the first day of the month and DROP confidence by ~0.15.
+    - where_raw: the verbatim "Where" / location string (trimmed).
+    - country: ISO-3166 alpha-2 (e.g. "IN", "US", "DE", "GB"). Never spelled-out.
+    - region: EXACTLY one of
+      ["Asia","Europe","NorthAmerica","SouthAmerica","Africa","Oceania","MiddleEast"].
+    - india_state: full state name; ONLY non-null when country == "IN".
+    - abstract_deadline: deadline for abstract / expression-of-interest /
+      registration-of-intent. This is DISTINCT from paper_deadline. Do not
+      conflate them — many conferences have both, separated by 1–2 weeks.
+    - paper_deadline: full paper / regular paper submission deadline.
+    - notification: author notification / acceptance notification date.
+    - camera_ready: camera-ready / final version due date.
+    - official_url: the conference's own canonical website (NOT the WikiCFP
+      page, NOT a submission portal, NOT a sponsor page). Never invent.
+      If the only available URL is wikicfp.com, return null.
+    - submission_system: link to EasyChair, EDAS, HotCRP, CMT, OpenReview, or
+      similar paper submission portal, if listed on the page. Otherwise null.
+    - sponsor_names: list of named sponsoring/technical-cosponsor organisations
+      (e.g. ["IEEE","ACM SIGCHI","Springer LNCS"]). Empty array [] if none.
+      Use canonical short names; do not include venue providers or hotels.
+    - raw_tags: pass-through of any topical tags the page lists for the event.
+      Empty array [] if none.
+    - confidence: float in [0.0, 1.0]. MUST equal the confidence of the WEAKEST
+      extracted non-null field — not the average. If any deadline was inferred
+      from "month YYYY" only, confidence cannot exceed 0.80.
+
+  Hard rules:
+    - Dates MUST be ISO-8601. Reject and emit null for any date you cannot
+      anchor to a specific year.
+    - country is ALWAYS ISO alpha-2. If you only have a city and cannot
+      confidently infer the country, emit null.
+    - is_virtual == true → country, region, india_state, where_raw MAY be null.
+    - If exactly one deadline is shown with no "abstract" / "paper" qualifier,
+      treat it as paper_deadline and leave abstract_deadline null.
+    - This is a CFP for an EVENT. If the page describes a journal special issue
+      (no event dates, no venue), emit acronym/name/description and set
+      is_workshop=false, categories=[], confidence <= 0.30 to force escalation.
+    - Do not invent values. Unknown == null (or [] for list fields).
+    - Output ONE JSON object only. No prose, no code fences, no trailing text.
 
 PROMPT_TIER3: |
-  You are an expert classifier with tool-calling access for unknown external conference
-  websites. WikiCFP pages do NOT use tools — rule-based parsing handles those.
+  You are an expert classifier with tool-calling access for unknown external
+  conference websites. WikiCFP pages do NOT use tools — rule-based parsing
+  handles those, so if the input site_url is on wikicfp.com, refuse with
+  {"event": null, "archive_urls": [], "tool_trace": [], "confidence": 0.0,
+    "escalate": true, "escalate_reason": "low_confidence"}.
+
   User message contains:
     {"html_excerpt": str, "site_url": str, "wikicfp_url": str|null,
-      "tier2": {...}|null, "escalate_reason": str}
+      "tier2": {...}|null, "escalate_reason": str, "max_tool_calls": 8}
 
-  Available tools: extract_text(selector), find_links(pattern), get_field(label),
-                   is_conference_page(), classify_category(text), detect_virtual(text).
+  Available tools (call only those listed; never invent tool names):
+    extract_text(selector)         -> str
+    find_links(pattern)            -> [str]
+    get_field(label)               -> str|null
+    is_conference_page()           -> bool
+    classify_category(text)        -> [str]
+    detect_virtual(text)           -> bool
 
-  Workflow:
-    1. If escalate_reason=="unknown_site": call is_conference_page() first.
-       If false → abort with {"is_cfp": false, "confidence": 1.0}.
-    2. Use get_field/extract_text to fill any null fields from tier2 output.
-    3. Use classify_category on the most descriptive text block to resolve
-       uncertain categories. Prefer 1–3 categories; never more than 3.
-    4. Call find_links(r"20[0-9]{2}") to discover archive/previous-edition URLs.
-    5. Check for separate abstract_deadline vs paper_deadline in the "Important Dates" section.
+  Tool-loop discipline (HARD CONSTRAINTS):
+    - You MUST stop calling tools after at most max_tool_calls invocations
+      (default 8). On the final allowed call, immediately emit your JSON
+      output with reduced confidence and "escalate": true,
+      "escalate_reason": "long_context".
+    - Never call the same tool with the same arguments twice. If a result
+      is empty, null, or an unexpected type, accept it as "no information",
+      record it in tool_trace, and move on — do NOT retry the same call.
+    - Tools may return [], "", or null. Treat these as "field unknown",
+      not as an error. Never loop trying to populate the same field.
+    - Never call tools after you have begun emitting the final JSON object.
 
-  When done, stop calling tools and emit EXACTLY:
+  Workflow (execute in order; skip a step only when its precondition fails):
+    1. If escalate_reason == "unknown_site": call is_conference_page() first.
+       If it returns false → emit
+       {"event": null, "archive_urls": [], "tool_trace": [...],
+         "confidence": 1.0, "escalate": false} and stop.
+    2. Starting from tier2 (if non-null), call get_field / extract_text only
+       for fields that are still null AND likely to appear on the page.
+       Do not query for fields the page clearly does not contain.
+    3. Use classify_category on the single most descriptive text block to
+       resolve uncertain categories. Output 1–3 categories — never more than 3,
+       never fewer than 1 if the page is clearly on-topic.
+    4. Call find_links(r"20[0-9]{2}") at most once to discover archive /
+       previous-edition URLs. Filter results to URLs on the same domain or a
+       clearly related domain (e.g. 2024.example.org from 2025.example.org).
+    5. In the page's "Important Dates" / "Key Dates" / "Submission" section,
+       distinguish abstract_deadline (abstract / EOI / registration-of-intent)
+       from paper_deadline (full paper). If only one date is shown without a
+       qualifier, treat it as paper_deadline.
+    6. Call detect_virtual(text) only if is_virtual is still uncertain after
+       reading where_raw.
+
+  When done, stop calling tools and emit EXACTLY one JSON object:
     {
-      "event": {...same shape as PROMPT_TIER2 output...},
+      "event": {
+        "acronym":           str,
+        "name":              str,
+        "edition_year":      int|null,
+        "is_workshop":       bool,
+        "categories":        [str],
+        "is_virtual":        bool,
+        "description":       str|null,
+        "rank":              str|null,
+        "when_raw":          str|null,
+        "start_date":        "YYYY-MM-DD"|null,
+        "end_date":          "YYYY-MM-DD"|null,
+        "where_raw":         str|null,
+        "country":           str|null,
+        "region":            str|null,
+        "india_state":       str|null,
+        "abstract_deadline": "YYYY-MM-DD"|null,
+        "paper_deadline":    "YYYY-MM-DD"|null,
+        "notification":      "YYYY-MM-DD"|null,
+        "camera_ready":      "YYYY-MM-DD"|null,
+        "official_url":      str|null,
+        "submission_system": str|null,
+        "sponsor_names":     [str],
+        "raw_tags":          [str],
+        "confidence":        float
+      } | null,
       "archive_urls": [str],
-      "tool_trace": [{"name": str, "args": {}, "result_summary": str}],
-      "confidence": float
+      "tool_trace": [{"name": str, "args": {...}, "result_summary": str}],
+      "confidence": float,
+      "escalate": bool,
+      "escalate_reason": "low_confidence"|"multi_category"|"unknown_site"|"long_context"|"dedup_ambiguous"|"ontology_edge"|null
     }
 
-  If final confidence < 0.80, add "escalate": true and one of:
-    "escalate_reason": "low_confidence"|"multi_category"|"unknown_site"|
-                       "long_context"|"dedup_ambiguous"|"ontology_edge"
+  Escalation rules (set these honestly):
+    - If final confidence < 0.80 → "escalate": true and pick the SINGLE most
+      accurate reason from the closed set above.
+    - If you hit max_tool_calls before populating critical fields → escalate
+      with reason "long_context".
+    - If the page is clearly not a conference (already aborted in step 1) →
+      "escalate": false (no need for further tiers).
+    - "escalate_reason" MUST be null when "escalate" is false.
+
+  Output ONE JSON object. No prose, no code fences, no trailing tool calls.
 
 PROMPT_TIER4: |
   You are a deep-reasoning curator running in batch mode on a capable machine.
   You receive a JSON array of EscalationPayload objects:
     [{"record": {...}, "tier_results": [...], "escalate_reason": str, "raw_html": str|null}]
 
-  For each item:
-    1. Produce the canonical Event record, resolving field conflicts conservatively
-       (prefer the higher-tier extraction when values disagree).
-    2. If escalate_reason=="ontology_edge" or the record has an unseen domain term,
-       propose ontology edges:
-         {"subject": str, "predicate": "is_a"|"part_of"|"related_to"|"synonym_of",
-           "object": str, "confidence": float}
-       The object MUST be a concept from the graph schema (context.md §5).
-       New branches: use object="ResearchField" with low confidence.
-    3. If escalate_reason=="dedup_ambiguous", emit:
-         {"same": bool, "reason": str}
+  ORDER PRESERVATION (CRITICAL):
+    - If the input array has N items, your output array MUST have exactly N
+      items, in the SAME order as the input. Index i of your output must
+      correspond to index i of the input — never reorder, never merge two
+      inputs into one output, never split one input into two outputs, never
+      drop an item even if it looks like a duplicate of another input item.
+    - If two input items appear to describe the same conference, still emit
+      two separate output objects (one per input). Use the dedup field to
+      flag the relationship.
 
-  Return EXACTLY a JSON array, one object per input, in input order:
+  For each item, in input order:
+    1. Produce the canonical Event record by reconciling tier_results:
+         - When fields conflict, prefer the higher-tier extraction (tier3 > tier2 > tier1).
+         - When all tiers say null, keep null. Do not fabricate.
+         - Apply the same field schema and rules as PROMPT_TIER2.
+    2. If escalate_reason == "ontology_edge" OR the record contains an
+       unfamiliar domain term, propose 0..N ontology edges:
+         {"subject": str,
+          "predicate": "is_a"|"part_of"|"related_to"|"synonym_of",
+          "object": str,
+          "confidence": float}
+       The object MUST be an existing concept from the graph schema
+       (context.md §5). For a brand new branch with no clear parent, set
+       object="ResearchField" and confidence <= 0.5 so a human can re-parent.
+       If no edges apply, emit an empty array [].
+    3. If escalate_reason == "dedup_ambiguous", emit:
+         {"same": bool, "reason": str}
+       Otherwise emit null for the dedup field.
+
+  Return EXACTLY a JSON array, one object per input, in input order. The array
+  length MUST equal the input length:
     [{
-      "event":      {...Event fields...},
-      "ontology":   [{OntologyEdge}],
-      "dedup":      {"same": bool, "reason": str}|null,
-      "final":      true,
+      "event": {
+        "acronym":           str,
+        "name":              str,
+        "edition_year":      int|null,
+        "is_workshop":       bool,
+        "categories":        [str],
+        "is_virtual":        bool,
+        "description":       str|null,
+        "rank":              str|null,
+        "when_raw":          str|null,
+        "start_date":        "YYYY-MM-DD"|null,
+        "end_date":          "YYYY-MM-DD"|null,
+        "where_raw":         str|null,
+        "country":           str|null,
+        "region":            str|null,
+        "india_state":       str|null,
+        "abstract_deadline": "YYYY-MM-DD"|null,
+        "paper_deadline":    "YYYY-MM-DD"|null,
+        "notification":      "YYYY-MM-DD"|null,
+        "camera_ready":      "YYYY-MM-DD"|null,
+        "official_url":      str|null,
+        "submission_system": str|null,
+        "sponsor_names":     [str],
+        "raw_tags":          [str],
+        "confidence":        float
+      },
+      "ontology":   [{"subject": str, "predicate": str, "object": str, "confidence": float}],
+      "dedup":      {"same": bool, "reason": str} | null,
+      "final":      bool,
       "confidence": float
     }]
-  Set "final": false ONLY if truly unresolvable (marks record permanently dead).
+
+  "final" semantics:
+    - true (default): record is curated and ready to commit.
+    - false: ONLY when the record is genuinely unresolvable (e.g. content
+      contradicts itself, or the page is not a real CFP). Setting false marks
+      the record permanently dead in the pipeline — use sparingly.
+
+  Output ONE JSON array. No prose, no code fences, no trailing text.
+  The array length MUST exactly match the input length — verify before emitting.
 
 PROMPT_DEDUP: |
   Decide whether two CFP records describe the SAME conference instance
   (same series AND same edition year). User message:
     {"a": {...Event...}, "b": {...Event...}}
 
-  SAME instance iff ALL are true:
-    - same canonical acronym (ignore case, year suffix, ordinals like "12th")
-    - same edition_year (or both null and start_date within 30 days of each other)
-    - locations are compatible (one may be null; they must not contradict)
+  Acronym normalisation (apply to both records before comparing):
+    - lowercase
+    - strip surrounding whitespace
+    - drop trailing 4-digit year ("ICML2025" -> "icml")
+    - drop trailing 2-digit year ("ICML25" -> "icml")
+    - drop leading ordinals: "12th", "1st", "2nd", "3rd", "21st" -> ""
+    - drop the word "the" at the start
+    - drop punctuation (-, ., _, /, ', ")
+    - collapse internal whitespace
+    Treat resulting empty strings as non-matching (do NOT match "" to "").
 
-  Also determine same_series: acronyms match but edition_year differs — useful
-  for building PRECEDED_BY edges in the knowledge graph.
+  SAME instance iff ALL of these are true:
+    1. Acronyms match after normalisation, OR the long-form names match after
+       lowercasing and whitespace collapse. NOTE: some series legitimately
+       change acronyms across years (e.g. rebranding, sponsor change) — if the
+       NAMES match strongly but acronyms differ, that still counts as a match.
+    2. edition_year matches exactly, OR both are null and start_date values
+       are within 30 days of each other, OR one edition_year is null and the
+       other's start_date falls inside the non-null record's date window.
+    3. Locations are compatible: a location is compatible with another if
+       they refer to the same city/country, OR one is null. Null is compatible
+       with ANY location (a missing location is unknown, not contradictory).
+       Two non-null locations contradict only if cities or countries differ
+       and neither record is is_virtual.
+    4. Virtual/in-person edition rule: a virtual edition and an in-person
+       edition of the SAME series in the SAME year ARE the same instance
+       (the conference simply ran in two modes); record same=true.
+       Mark same_series=true regardless.
 
-  Return EXACTLY:
+  Tie-breakers (apply in order):
+    - If acronym matches AND edition_year matches AND one record has location=null
+      while the other has a concrete location → SAME (null does not contradict).
+    - If acronym matches AND edition_year matches AND one is is_virtual=true
+      while the other is is_virtual=false → SAME (hybrid/dual-mode edition).
+    - If acronyms differ but names match exactly AND edition_year matches AND
+      locations are compatible → SAME (rebranded series).
+
+  same_series: True iff the canonical acronym OR the long-form name matches,
+  regardless of edition_year. Useful for building PRECEDED_BY edges in the
+  knowledge graph. If same==true then same_series MUST also be true.
+
+  Return EXACTLY one JSON object:
     {"same": bool, "same_series": bool, "reason": str}
-  When unsure: {"same": false, "same_series": false, "reason": "uncertain"}
+
+  The "reason" string MUST be a short (<=140 chars) human-readable explanation
+  citing which rule fired (e.g. "acronym+year match, locations compatible (b=null)").
+  When genuinely uncertain, return:
+    {"same": false, "same_series": false, "reason": "uncertain: <why>"}
+  Output ONE JSON object only. No prose, no code fences.
 
 PROMPT_ONTOLOGY_SYNONYM: |
   Given a cluster of raw category tags grouped by embedding similarity:
-    {"cluster_id": int, "tags": [str], "example_events": [{"acronym":..., "name":...}]}
+    {"cluster_id": int, "tags": [str], "example_events": [{"acronym": str, "name": str}]}
 
-  Choose the best canonical concept name (PascalCase, no spaces) and emit:
+  Pick ONE canonical concept name that best summarises the cluster and a list
+  of all input tags that should be treated as synonyms of it.
+
+  Canonical-name rules:
+    - PascalCase, no spaces, ASCII letters/digits only
+      (e.g. "MachineLearning", "ComputerVision", "PostQuantumCryptography").
+    - Prefer an EXISTING concept name from the graph schema (context.md §5)
+      if any fits the cluster — even loosely. Only invent a new name when no
+      existing concept is a reasonable fit.
+    - Never use punctuation, slashes, ampersands, or trailing digits.
+    - Never use the names of the categories enum (AI, ML, etc.) directly —
+      those are top-level branches, not leaf concepts.
+
+  Synonym-list rules:
+    - Include ONLY tags that are clearly the same concept as the canonical.
+      If a tag is a sibling (related but distinct), exclude it.
+    - Preserve the exact original casing of each input tag.
+    - Deduplicate; never include the canonical name itself.
+    - May be empty [] if the cluster has only one tag and it equals canonical.
+
+  Return EXACTLY one JSON object:
     {"canonical": str, "synonyms": [str], "confidence": float}
 
-  The canonical name SHOULD match an existing concept in the graph schema
-  (context.md §5) if one fits. Otherwise propose a new name.
+  Confidence guide:
+    - >= 0.85: canonical matches an existing schema concept and all tags are
+      clearly synonymous.
+    - 0.60–0.85: new canonical name; tags are coherent.
+    - < 0.60: cluster is mixed — return your best guess; a human will review.
+
+  Output ONE JSON object only. No prose, no code fences.
 
 PROMPT_ONTOLOGY_ISA: |
   Given a candidate concept and the current hierarchy:
     {"concept": str, "hierarchy": {...}, "co_occurring": [str]}
 
-  Decide its parent and emit ONE edge:
+  Decide the SINGLE best parent for this concept and emit ONE is_a edge.
+
+  Parent-selection rules:
+    - "object" MUST be an existing node already present in "hierarchy" or in
+      the graph schema (context.md §5). Never invent a new parent here.
+    - Prefer the most specific (deepest) parent that is still strictly more
+      general than the concept. Avoid jumping straight to the root.
+    - Never make a concept a child of itself, of a sibling, or of one of its
+      own descendants. Verify by walking the hierarchy.
+    - Use co_occurring tags as a hint for which subtree the concept lives in,
+      but do NOT make a co-occurring tag the parent unless it is structurally
+      more general.
+    - If no good parent exists in the hierarchy, fall back to
+      object="ResearchField" with confidence <= 0.5 so a human can re-parent.
+
+  Return EXACTLY one JSON object:
     {"subject": str, "predicate": "is_a", "object": str, "confidence": float}
 
-  The object MUST be an existing node in the graph schema (context.md §5).
-  If no good parent exists, use object="ResearchField" with low confidence so
-  a human reviewer can re-parent it.
+  Where:
+    - subject == the input "concept" verbatim.
+    - predicate is the literal string "is_a" (no other predicate is allowed
+      in this prompt).
+    - object is the chosen parent node name.
+    - confidence is in [0.0, 1.0]; use < 0.5 when falling back to ResearchField
+      or when the hierarchy gives weak evidence.
+
+  Output ONE JSON object only. No prose, no code fences.
 
 PROMPT_PERSON_EXTRACT: |
   Extract all named people and their roles from a conference committee page.
   User message: {"html_text": str, "conference_acronym": str, "edition_year": int|null}
 
-  For each person found, extract:
+  Role mapping (closed set — never invent new role values):
+    - "general_chair": General Chair, Conference Chair, Honorary Chair
+    - "pc_chair":      Program Chair, PC Chair, Track Chair, Co-Chair (any of
+                       the above), Workshop Chair, Tutorial Chair, Demo Chair
+    - "area_chair":    Area Chair, Senior PC, Senior Reviewer, Meta-Reviewer
+    - "keynote":       Keynote Speaker, Plenary Speaker, Invited Speaker
+    - "organizer":     Local Organizer, Publicity Chair, Publication Chair,
+                       Sponsorship Chair, Steering Committee, Web Chair
+    - "other":         anything else clearly committee-related
+
+  Skip rules (do NOT emit these):
+    - Placeholder entries: any name equal to or starting with "TBD",
+      "TBA", "To be announced", "To be determined", "—", "?", "N/A", or
+      a role label with no name attached (e.g. "Program Chair: TBA").
+    - Pure organisation entries with no person name (e.g. a logo of "IBM
+      Research" with no named contact).
+    - Authors of cited papers, sponsors, or attendees.
+    - Generic email aliases (e.g. "info@conf.org") with no person name.
+
+  Multiple roles for one person:
+    - If the same person is listed under multiple roles, emit ONE entry per
+      distinct role. Use the same full_name and organisation; the role field
+      differs across entries. Do NOT merge into a list of roles.
+
+  Field rules:
+    - full_name: as printed on the page, with diacritics preserved. Strip
+      titles ("Prof.", "Dr.", "PhD", "Sir") from the start. Keep suffixes
+      that are part of the name ("Jr.", "III").
+    - organisation: the affiliation as printed (e.g. "MIT", "Google Research",
+      "ETH Zürich"). Null if not listed.
+    - email: only if literally on the page. Never construct an email from
+      a name + domain pattern. Decode "name [at] domain [dot] com" only when
+      the obfuscation is unambiguous; otherwise null.
+    - homepage: only if a hyperlink is given. Do not fabricate URLs.
+
+  Return EXACTLY one JSON object:
     {
-      "full_name":    str,
-      "role":         "general_chair"|"pc_chair"|"area_chair"|"keynote"|"organizer"|"other",
-      "organisation": str|null,
-      "email":        str|null,
-      "homepage":     str|null
+      "people": [
+        {"full_name":    str,
+         "role":         "general_chair"|"pc_chair"|"area_chair"|"keynote"|"organizer"|"other",
+         "organisation": str|null,
+         "email":        str|null,
+         "homepage":     str|null}
+      ],
+      "confidence": float
     }
 
-  Return EXACTLY:
-    {"people": [{"full_name": str, "role": str, "organisation": str|null,
-                  "email": str|null, "homepage": str|null}],
-      "confidence": float}
-
-  Rules:
-    - Only include people explicitly listed on this page.
-    - "co-chair" or "track chair" → "pc_chair".
-    - Do not invent email or homepage. Unknown = null.
+  - "people" MUST be an array (possibly empty []).
+  - confidence reflects parse difficulty, not number of people found.
+  - Output ONE JSON object only. No prose, no code fences.
 
 PROMPT_VENUE_EXTRACT: |
   Extract venue details from a conference page. User message:
-    {"html_text": str, "where_raw": str|null}
+    {"html_text": str, "where_raw": str|null, "is_virtual": bool|null}
 
   where_raw is the raw location string from WikiCFP (may be null).
+  is_virtual, when provided by the orchestrator, is authoritative.
 
-  Return EXACTLY:
+  Virtual events (KNOWN STATE — emit confidently):
+    - If is_virtual == true, OR the page text clearly indicates the event is
+      fully online / virtual / remote, emit:
+        venue_name=null, city=null, state=null, country=null, region=null,
+        address=null, maps_url=null, confidence >= 0.9
+      A virtual event having no venue is a known state, NOT uncertainty.
+
+  Hybrid / multi-venue events:
+    - If the event has both a physical and a virtual mode, extract the
+      PRIMARY physical venue (usually the one stated first, or the one with
+      the most detail). Do not emit multiple venues.
+    - If the event runs in multiple satellite cities (rare), pick the venue
+      the page presents as the main / headquarters site. Do not blend
+      addresses from different cities.
+
+  Field rules:
+    - venue_name: e.g. "Marriott Downtown", "ExCeL London", "IIT Delhi
+      Convention Centre". Null if only a city is given.
+    - city: city name in its commonly used English form (e.g. "Mumbai",
+      not "Bombay"; "Munich", not "München") when an unambiguous mapping
+      exists; otherwise the form as printed.
+    - state: full state name for India ("Karnataka"); 2-letter abbreviation
+      for the US ("CA"); null elsewhere unless clearly relevant.
+    - country: ISO-3166 alpha-2 (e.g. "IN", "US", "DE", "GB"). Never
+      spelled-out. If you cannot confidently infer the country from a city
+      alone, emit null rather than guess.
+    - region: EXACTLY one of
+      ["Asia","Europe","NorthAmerica","SouthAmerica","Africa","Oceania","MiddleEast"].
+    - address: full street address only if given verbatim. Never construct.
+    - maps_url: only if a Google/Apple/OSM maps link is present on the page.
+      Never synthesise from address.
+
+  Return EXACTLY one JSON object:
     {
-      "venue_name":  str|null,    // e.g. "Marriott Downtown", "Convention Centre"
+      "venue_name":  str|null,
       "city":        str|null,
-      "state":       str|null,    // for India: state name; for US: state abbreviation
-      "country":     str|null,    // ISO alpha-2
+      "state":       str|null,
+      "country":     str|null,
       "region":      str|null,
       "address":     str|null,
       "maps_url":    str|null,
       "confidence":  float
     }
 
-  Do not invent values. Unknown = null.
+  Confidence guide:
+    - >= 0.9 for confirmed virtual events (all fields null) or for fully
+      specified physical venues with name + city + country.
+    - 0.6–0.85 when only city + country are confidently extracted.
+    - < 0.6 when location is ambiguous or contradictory.
+
+  Do not invent values. Unknown == null. Output ONE JSON object only.
+  No prose, no code fences.
 
 ---
 
