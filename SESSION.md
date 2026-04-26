@@ -71,6 +71,8 @@ Full spec: `context.md` · All LLM prompts: `prompts.md`
 ### Partially created (codegen specs only — no implementation yet)
 | File | Status |
 |---|---|
+| `arch.md` | ✅ Created — 15 open questions, risk register, ADRs, K8s spec |
+| `lesson_plan.md` | ✅ Created — 14-module learning curriculum + glossary |
 | `codegen/00_HOWTO.md` | ✅ Created |
 | `codegen/01_config_models.md` | ✅ Created — spec for config.py + wcfp/models.py |
 | `codegen/04_wikicfp_parser.md` | ✅ Created — spec for wcfp/parsers/ |
@@ -152,6 +154,7 @@ Key patterns to incorporate — all captured in codegen specs:
 
 | Need | Where |
 |---|---|
+| Standing instructions | `CLAUDE.md` |
 | Architecture | `context.md` (19 sections) |
 | LLM prompts | `prompts.md` (PROMPT_TIER1..4, PROMPT_DEDUP, etc.) |
 | How to implement | `codegen/00_HOWTO.md` |

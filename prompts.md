@@ -937,4 +937,72 @@ PROMPT_QUALITY_GUARD: |
 
 ---
 
+PROMPT_SERIES_EXTRACT: |
+  Extract conference series information from a WikiCFP series listing page.
+  User message: {"html_text": str, "series_url": str}
+
+  A series groups multiple annual editions of the same conference (e.g. ICCV 2023, ICCV 2025).
+
+  Return EXACTLY:
+    {
+      "series_acronym":  str,
+      "full_name":       str,
+      "publisher":       str|null,       // IEEE|ACM|Springer|USENIX|other|null
+      "rank":            str|null,       // CORE rank if stated: "A*"|"A"|"B"|"C"
+      "primary_field":   str|null,       // single category value matching Category enum
+      "edition_urls":    [str],          // list of per-year edition URLs found on this page
+      "official_url":    str|null,       // persistent homepage if listed
+      "confidence":      float
+    }
+
+  Rules:
+    - publisher must be one of the listed values or null — do not free-text it.
+    - edition_urls must be absolute URLs (prepend https://www.wikicfp.com if relative).
+    - Do not invent official_url from the series name. Unknown = null.
+
+PROMPT_ORG_EXTRACT: |
+  Extract organisation details from a mention on a conference page.
+  User message: {"mention": str, "context": str}
+
+  "mention" is a raw organisation string (e.g. "Dept. of CS, IIT Bombay, India").
+  "context" is the surrounding sentence or paragraph.
+
+  Return EXACTLY:
+    {
+      "name":        str,              // canonical name, no abbreviations
+      "short_name":  str|null,         // well-known abbreviation (e.g. "IIT Bombay")
+      "type":        "university"|"research_lab"|"company"|"government"|"publisher"|"other",
+      "country":     str|null,         // ISO alpha-2
+      "city":        str|null,
+      "homepage":    str|null,
+      "confidence":  float
+    }
+
+  Rules:
+    - Spell out the canonical name (do not use acronyms as the primary name).
+    - type="publisher" only for IEEE, ACM, Springer, Elsevier, and similar academic publishers.
+    - Do not invent homepage. Unknown = null.
+
+PROMPT_DEADLINE_CHANGE: |
+  Detect whether this text announces a deadline change for a conference.
+  User message: {"text": str, "known_acronym": str|null}
+
+  Return EXACTLY:
+    {
+      "is_deadline_change": bool,
+      "acronym":            str|null,
+      "new_paper_deadline": "YYYY-MM-DD"|null,
+      "new_abstract_deadline": "YYYY-MM-DD"|null,
+      "change_type":        "extension"|"brought_forward"|"cancelled"|"new_deadline"|null,
+      "confidence":         float
+    }
+
+  Rules:
+    - If is_deadline_change=false, all other fields except confidence must be null.
+    - Dates must be ISO-8601. If the text says "extended to March 15", extract that date.
+    - change_type="extension" if new date is later than the original;
+      "brought_forward" if earlier; "cancelled" if conference is cancelled.
+
+---
+
 # ─── ADD YOUR PROMPTS / KEYWORDS BELOW ───────────────────────────────────────
