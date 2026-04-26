@@ -4,11 +4,33 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.wiki-cfp/
+*.venv/
+env/
 
-# Data output (tracked separately or gitignored as preferred)
+# Secrets and local config — never commit these
+.env
+*.pem
+*.key
+token.json
+credentials.json
+
+# Data — timestamped archives (data/latest.json IS tracked)
 data/conferences_*.json
 data/conferences_*.csv
+data/pg_backup/
+data/archive/
+
+# Ollama model weights — too large for git
+*.gguf
+*.bin
 
 # Editors / OS
 .DS_Store
 *.swp
+.idea/
+.vscode/
+
+# Build artefacts
+dist/
+build/
