@@ -1,7 +1,7 @@
 # Project Context — WikiCFP Conference Scraper
 
 > Living architecture document. Source of truth for code generation.
-> Last updated: 2026-04-25
+> Last updated: 2026-04-26
 
 When in doubt, read this file end-to-end before writing code. Every section
 contains concrete contracts (filenames, signatures, schemas, key names) — do
@@ -23,15 +23,25 @@ Fully automated pipeline that:
 
 ---
 
-## 2. Hardware Inventory
+## 2. Single-Machine Operation
 
-| Machine       | GPU      | VRAM   | Role                                           |
-|---------------|----------|--------|------------------------------------------------|
-| Workstation A | RTX 4090 | 24 GB  | Tier 3 reasoning + tool calling                |
-| Workstation B | RTX 3080 | 16 GB  | Tier 1 / Tier 2 inference, embeddings          |
-| DGX Station   | 8× A100  | 256 GB | Tier 4 batch reasoning, ontology inference     |
+The pipeline runs on **one machine at a time**. Any machine with Docker and Ollama
+installed can restore state from GCS, run a session, sync back, and wipe local data.
 
-Each machine runs its own Ollama daemon. Hosts configured in `config.py` (see §6).
+Set `WCFP_MACHINE` to the profile that matches the current machine:
+
+| `WCFP_MACHINE` | Min VRAM | Local tiers                                          |
+|----------------|----------|------------------------------------------------------|
+| `dgx`          | 80 GB    | All tiers + deepseek-r1:70b for Tier 4               |
+| `gpu_large`    | 24 GB    | Tiers 1–4 (qwen3:4b + qwen3:14b + qwen3:32b + deepseek-r1:32b) |
+| `gpu_mid`      | 10 GB    | Tiers 1–2 (qwen3:4b + qwen3:14b)                    |
+| `gpu_small`    | 4 GB     | Tier 1 only (qwen3:4b)                               |
+| `cpu_only`     | —        | Tier 1 only (qwen3:4b, slow)                         |
+
+`nomic-embed-text` runs on all profiles (300 MB VRAM / CPU fallback).
+
+Jobs whose required model is absent are pushed to `wcfp:escalate:tier4` and
+accumulate until the next session on a capable machine. Nothing is lost.
 
 ---
 
@@ -115,6 +125,19 @@ for scanning millions of rows and aggregating. Connecting DuckDB to PostgreSQL
 via postgres_scanner gives the best of both worlds: transactional writes in
 PostgreSQL, columnar analytical reads via DuckDB. All report generation
 uses DuckDB. DuckDB never writes to disk in this project.
+
+### GCS as Off-Machine Persistence
+
+All local databases are ephemeral — they exist only for the duration of a pipeline
+session. GCS (`gs://$GCS_BUCKET/$GCS_PREFIX/`) is the durable store between sessions:
+
+| Artifact            | Local path              | GCS path                         | Tool           |
+|---------------------|-------------------------|----------------------------------|----------------|
+| PostgreSQL dump     | data/pg_backup/latest.dump | pg_backup/latest.dump         | pg_dump/rclone |
+| Parquet snapshots   | data/archive/           | archive/                         | rclone         |
+| Reports             | reports/                | reports/                         | rclone + git   |
+
+Redis and DuckDB have no GCS backup: Redis is ephemeral by design; DuckDB owns no data.
 
 ---
 
@@ -292,21 +315,21 @@ DuckDB never writes to disk in this project — it is a calculation layer only.
 
 ## 9. Model Roster and Tool Calling
 
-| Model              | Host     | VRAM    | Tool calling | Role                                     |
-|--------------------|----------|---------|--------------|------------------------------------------|
-| `qwen3:4b`         | RTX 3080 | ~3 GB   | **YES**      | Tier 1 triage                            |
-| `qwen3:14b`        | RTX 3080 | ~10 GB  | **YES**      | Tier 2 extraction + people/venue/org     |
-| `qwen3:32b`        | RTX 4090 | ~22 GB  | **YES**      | Tier 3 + unknown site tool calling       |
-| `mistral-nemo:12b` | RTX 3080 | ~9 GB   | partial      | Long-context HTML (>32k tokens)          |
-| `deepseek-r1:32b`  | RTX 4090 | ~22 GB  | **NO**       | Dedup pair reasoning (pure yes/no)       |
-| `deepseek-r1:70b`  | DGX      | ~80 GB  | **NO**       | Tier 4 overnight + ontology inference    |
-| `nomic-embed-text` | RTX 3080 | ~300 MB | N/A          | 768-d embeddings → pgvector              |
+| Model              | Min VRAM | Profile      | Tool calling | Role                                     |
+|--------------------|----------|--------------|--------------|------------------------------------------|
+| `qwen3:4b`         | ~3 GB    | gpu_small+   | **YES**      | Tier 1 triage                            |
+| `qwen3:14b`        | ~10 GB   | gpu_mid+     | **YES**      | Tier 2 extraction + people/venue/org     |
+| `qwen3:32b`        | ~22 GB   | gpu_large+   | **YES**      | Tier 3 + unknown site tool calling       |
+| `mistral-nemo:12b` | ~9 GB    | gpu_mid+     | partial      | Long-context HTML (>32k tokens)          |
+| `deepseek-r1:32b`  | ~22 GB   | gpu_large+   | **NO**       | Dedup pair reasoning (pure yes/no)       |
+| `deepseek-r1:70b`  | ~80 GB   | dgx only     | **NO**       | Tier 4 batch + ontology inference        |
+| `nomic-embed-text` | ~300 MB  | all profiles | N/A          | 768-d embeddings → pgvector              |
 
-**Tool calling is used only for unknown external conference websites.**
+Tool calling is used only for unknown external conference websites.
 WikiCFP pages use rule-based BS4 parsing — no GPU, no LLM.
 Tools: `extract_text(selector)`, `find_links(pattern)`, `get_field(label)`,
 `is_conference_page()`, `classify_category(text)`, `detect_virtual(text)`.
-DeepSeek-R1 models do NOT need tools; their tasks are structured reasoning over
+DeepSeek-R1 models do NOT use tools; their tasks are pure reasoning over
 data already in the database (dedup comparison, ontology validation).
 
 ---
@@ -377,15 +400,29 @@ Enums: `Category` (AI/ML/DevOps/...), `Tier` (1-4), `JobStatus`,
 ```python
 PG_DSN         = os.getenv("PG_DSN", "postgresql://wcfp:wcfp@localhost:5432/wikicfp")
 REDIS_URL      = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+OLLAMA_HOST    = os.getenv("OLLAMA_HOST", "http://localhost:11434")   # single local daemon
 AGE_GRAPH      = "wcfp_graph"
 EMBED_DIM      = 768
 DEDUP_COSINE   = 0.92
 TIER_THRESHOLD = {1: 0.85, 2: 0.85, 3: 0.80}
 LONG_CONTEXT_TOKENS = 32_000
-OLLAMA_HOSTS   = {"rtx4090": ..., "rtx3080": ..., "dgx": ...}
-MODEL_HOST     = {"qwen3:4b": "rtx3080", "qwen3:32b": "rtx4090", ...}
-WCFP_MACHINE   = os.getenv("WCFP_MACHINE", "rtx3080")   # rtx3080|rtx4090|dgx
-WCFP_STORAGE   = os.getenv("WCFP_STORAGE", "b2")        # b2|gcs|s3|minio
+
+# Machine profile — controls which models are pulled and which tiers run locally
+WCFP_MACHINE   = os.getenv("WCFP_MACHINE", "gpu_mid")   # dgx|gpu_large|gpu_mid|gpu_small|cpu_only
+
+# GCS / rclone settings
+GCS_BUCKET     = os.getenv("GCS_BUCKET", "wcfp-data")
+GCS_PREFIX     = os.getenv("GCS_PREFIX", "prod")
+RCLONE_REMOTE  = os.getenv("RCLONE_REMOTE", "gcs")      # name of the rclone remote
+
+# Model selection by profile — code skips unavailable tiers and escalates
+PROFILE_MODELS = {
+    "dgx":       ["qwen3:4b","qwen3:14b","qwen3:32b","deepseek-r1:32b","deepseek-r1:70b","nomic-embed-text"],
+    "gpu_large": ["qwen3:4b","qwen3:14b","qwen3:32b","deepseek-r1:32b","nomic-embed-text"],
+    "gpu_mid":   ["qwen3:4b","qwen3:14b","nomic-embed-text"],
+    "gpu_small": ["qwen3:4b","nomic-embed-text"],
+    "cpu_only":  ["qwen3:4b","nomic-embed-text"],
+}
 ```
 
 ---
@@ -431,28 +468,27 @@ The AGE graph IS the live ontology. The `.owl` file is a read-only export.
 
 ---
 
-## 15. Error Handling, Sync, Installation
+## 15. Error Handling and Portable Install
 
 **Error classes**: `RetryableError` (429/5xx/timeout/LLM JSON decode) and
 `FatalError` (404/410/robots disallow). Both push to `wcfp:dead` after MAX_RETRIES.
-Nightly Tier 4 batch drains dead-letter.
+The next Tier 4 batch drains the dead-letter list.
 
-**Portable clone**:
+**Portable clone (any machine)**:
 ```bash
 git clone <repo> && cd wiki-cfp
-WCFP_MACHINE=rtx3080 WCFP_STORAGE=b2 bash setup.sh
+WCFP_MACHINE=gpu_large GCS_BUCKET=wcfp-data bash setup.sh
 ```
-setup.sh: venv + pip → docker compose up → rclone pull pg_backup →
-pg_restore → ollama pull (machine-specific models) → verify connectivity.
-
-After each run: `pg_dump` → rclone push. `reports/` + `data/latest.json` → git push.
-Heavy data (pg_dump, Parquet archives) → rclone to cloud. Never to git.
+setup.sh sequence: venv + pip → docker compose up → rclone pull pg_backup →
+pg_restore → ollama pull (profile-specific models) → verify connectivity.
 
 **requirements.txt**: `psycopg[binary]>=3.1 duckdb>=1.0 redis>=5.0 ollama>=0.3
-beautifulsoup4>=4.12 lxml>=5.0 requests>=2.32 tiktoken>=0.7 owlready2>=0.46 rdflib>=7.0 pandas>=2.0`
+beautifulsoup4>=4.12 lxml>=5.0 requests>=2.32 tiktoken>=0.7 owlready2>=0.46 rdflib>=7.0
+pandas>=2.0 google-cloud-storage>=2.0`
 
 **docker-compose.yml**: `apache/age:PG16_latest` (PostgreSQL 16 + AGE pre-installed)
-+ `redis:7-alpine`. Two containers total.
++ `redis:7-alpine`. Two containers only. All state in named Docker volumes.
+`docker compose down -v` removes all local state — GCS is the backup.
 
 ---
 
@@ -490,3 +526,46 @@ beautifulsoup4>=4.12 lxml>=5.0 requests>=2.32 tiktoken>=0.7 owlready2>=0.46 rdfl
 | 2026-04-25 | rclone + Backblaze B2 for state sync      | Cheapest S3-compatible; handles pg_dump + Parquet archives    |
 | 2026-04-25 | WCFP_MACHINE env var for model routing    | Each machine pulls only the models it needs                   |
 | 2026-04-25 | 4-tier pipeline: 4b → 14b → 32b → 70b   | ~80% resolved by qwen3:4b; DGX only for the hard 1%          |
+| 2026-04-26 | Single-machine operation + GCS persistence | Any machine can run; GCS is the durable store; local state is always ephemeral |
+| 2026-04-26 | WCFP_MACHINE profile replaces per-host routing | One Ollama daemon on localhost; tiers skipped if model absent; jobs escalate |
+
+---
+
+## 18. Machine Lifecycle — Pull → Run → Sync → Wipe
+
+Every pipeline session follows four phases. `setup.sh` automates phases 1 and 4.
+
+### Phase 1 — Restore
+```bash
+docker compose up -d
+rclone copy $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/pg_backup/ ./data/pg_backup/
+pg_restore -h localhost -U wcfp -d wikicfp -F c ./data/pg_backup/latest.dump
+ollama pull $(python -m wcfp list-models)   # pulls only what WCFP_MACHINE profile needs
+```
+
+### Phase 2 — Run
+```bash
+python -m wcfp init-db           # idempotent: skips if schema exists
+python -m wcfp enqueue-seeds     # parse prompts.md → push URLs into Redis queue
+python -m wcfp run-pipeline      # dequeue → fetch → parse → tier pipeline → PG + AGE
+python -m wcfp generate-reports  # DuckDB → reports/*.md
+```
+
+### Phase 3 — Sync
+```bash
+python -m wcfp sync-push         # internally runs:
+  # pg_dump -F c -f ./data/pg_backup/latest.dump
+  # rclone copy ./data/pg_backup/ $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/pg_backup/
+  # rclone copy ./reports/        $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/reports/
+  # git add reports/ data/latest.json && git commit && git push
+```
+
+### Phase 4 — Wipe (recommended for borrowed or cloud machines)
+```bash
+docker compose down -v           # removes PostgreSQL + Redis volumes
+rm -rf ./data/pg_backup/         # remove local dump file
+ollama rm qwen3:32b deepseek-r1:32b   # optional: free disk on profiles that won't reuse them
+```
+
+**Nothing is lost.** GCS holds the canonical pg_dump. Git holds reports and seed data.
+Re-running `bash setup.sh` on any machine restores full operational state.

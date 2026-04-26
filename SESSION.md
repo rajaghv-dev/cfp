@@ -1,7 +1,7 @@
 # Session State — CFP Conference Knowledge Pipeline
 
 > Read this at the start of every new session for full context in ~2 minutes.
-> Last updated: 2026-04-25
+> Last updated: 2026-04-26
 
 ---
 
@@ -36,18 +36,22 @@ People, venues, organisations, ontology concepts are all first-class graph nodes
 | Qwen3 (4b/14b/32b) | Tier 1–3: classification + tool calling. Ollama only. |
 | DeepSeek-R1 (32b/70b) | Dedup reasoning + Tier 4 batch. No tool calling. |
 | nomic-embed-text | 768-d embeddings → pgvector |
+| GCS (rclone) | Off-machine persistence: pg_dump + Parquet + reports |
+| Single machine | Any single machine with Docker + Ollama. WCFP_MACHINE profile controls which tiers run. |
 
 Full spec: `context.md` · All LLM prompts: `prompts.md`
 
 ---
 
-## Hardware
+## Hardware Profiles
 
-| Machine | GPU | VRAM | Models (WCFP_MACHINE=) |
-|---|---|---|---|
-| Workstation A | RTX 4090 | 24 GB | `rtx4090` → qwen3:32b, deepseek-r1:32b |
-| Workstation B | RTX 3080 | 16 GB | `rtx3080` → qwen3:4b, qwen3:14b, mistral-nemo:12b, nomic-embed-text |
-| DGX Station | 8× A100 | 256 GB | `dgx` → deepseek-r1:70b |
+| `WCFP_MACHINE` | Min VRAM | Tiers / Models |
+|---|---|---|
+| `dgx` | 80 GB | All tiers + deepseek-r1:70b for Tier 4 |
+| `gpu_large` | 24 GB | Tiers 1–4 (qwen3:4b + qwen3:14b + qwen3:32b + deepseek-r1:32b) |
+| `gpu_mid` | 10 GB | Tiers 1–2 (qwen3:4b + qwen3:14b) |
+| `gpu_small` | 4 GB | Tier 1 only (qwen3:4b) |
+| `cpu_only` | — | Tier 1 only (qwen3:4b, slow) |
 
 ---
 

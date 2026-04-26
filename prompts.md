@@ -28,6 +28,10 @@ Category values MUST match the `Category` enum in `wcfp/models.py` exactly:
 CATEGORY: AI
 KEYWORD: artificial intelligence
 KEYWORD: AI
+KEYWORD: agentic AI
+KEYWORD: multimodal AI
+KEYWORD: AI safety
+KEYWORD: AI alignment
 URL: http://www.wikicfp.com/cfp/call?conference=artificial%20intelligence&page=1
 
 ## ML — Machine Learning
@@ -41,6 +45,10 @@ KEYWORD: NLP
 KEYWORD: reinforcement learning
 KEYWORD: large language model
 KEYWORD: LLM
+KEYWORD: diffusion models
+KEYWORD: foundation models
+KEYWORD: generative AI
+KEYWORD: transformer
 URL: http://www.wikicfp.com/cfp/call?conference=machine%20learning&skip=1
 
 ## DevOps & SRE
@@ -52,6 +60,7 @@ KEYWORD: kubernetes
 KEYWORD: cloud native
 KEYWORD: continuous integration
 KEYWORD: infrastructure as code
+URL: http://www.wikicfp.com/cfp/call?conference=devops&skip=1
 
 ## Linux & Open Source
 CATEGORY: Linux
@@ -60,6 +69,7 @@ KEYWORD: open source
 KEYWORD: embedded linux
 KEYWORD: operating systems
 KEYWORD: kernel
+URL: http://www.wikicfp.com/cfp/call?conference=linux&skip=1
 
 ## Chip Design
 CATEGORY: ChipDesign
@@ -73,6 +83,7 @@ KEYWORD: ASIC
 KEYWORD: RTL
 KEYWORD: hardware design
 KEYWORD: electronic design automation
+URL: http://www.wikicfp.com/cfp/call?conference=VLSI&skip=1
 
 ## Mathematics
 CATEGORY: Math
@@ -85,6 +96,7 @@ KEYWORD: graph theory
 KEYWORD: topology
 KEYWORD: numerical analysis
 KEYWORD: computational mathematics
+URL: http://www.wikicfp.com/cfp/call?conference=mathematics&skip=1
 
 ## Legal & Cyber Law
 CATEGORY: Legal
@@ -96,6 +108,7 @@ KEYWORD: intellectual property
 KEYWORD: privacy law
 KEYWORD: data protection
 KEYWORD: GDPR
+URL: http://www.wikicfp.com/cfp/call?conference=law&skip=1
 
 ## Computer Science (General)
 CATEGORY: ComputerScience
@@ -118,6 +131,10 @@ KEYWORD: network security
 KEYWORD: information security
 KEYWORD: privacy
 KEYWORD: blockchain
+KEYWORD: zero trust
+KEYWORD: post-quantum cryptography
+KEYWORD: fuzzing
+KEYWORD: adversarial machine learning
 URL: http://www.wikicfp.com/cfp/call?conference=security&skip=1
 
 ## Databases & Data Engineering
@@ -129,6 +146,11 @@ KEYWORD: data science
 KEYWORD: data mining
 KEYWORD: knowledge discovery
 KEYWORD: information retrieval
+KEYWORD: vector database
+KEYWORD: data lakehouse
+KEYWORD: real-time analytics
+KEYWORD: knowledge graph
+URL: http://www.wikicfp.com/cfp/call?conference=database&skip=1
 
 ## Networking & Communications
 CATEGORY: Networking
@@ -140,6 +162,9 @@ KEYWORD: internet of things
 KEYWORD: mobile computing
 KEYWORD: edge computing
 KEYWORD: fog computing
+KEYWORD: software defined networking
+KEYWORD: network function virtualization
+URL: http://www.wikicfp.com/cfp/call?conference=networking&skip=1
 
 ## Robotics & Automation
 CATEGORY: Robotics
@@ -147,6 +172,9 @@ KEYWORD: robotics
 KEYWORD: autonomous systems
 KEYWORD: automation
 KEYWORD: control systems
+KEYWORD: human-robot interaction
+KEYWORD: robot learning
+URL: http://www.wikicfp.com/cfp/call?conference=robotics&skip=1
 
 ## Bioinformatics & Healthcare IT
 CATEGORY: Bioinformatics
@@ -155,6 +183,9 @@ KEYWORD: computational biology
 KEYWORD: health informatics
 KEYWORD: medical imaging
 KEYWORD: genomics
+KEYWORD: protein structure prediction
+KEYWORD: single cell sequencing
+URL: http://www.wikicfp.com/cfp/call?conference=bioinformatics&skip=1
 
 ---
 
@@ -286,30 +317,37 @@ PARSER: www.usenix.org        -> wcfp.parsers.usenix
 
 ---
 
+# ─── EXTERNAL DATA SOURCES ───────────────────────────────────────────────────
+
+# ai-deadlines YAML (scraped and merged with WikiCFP data)
+URL: https://raw.githubusercontent.com/paperswithcode/ai-deadlines/main/deadlines.yml
+
+---
+
 # ─── LLM SYSTEM PROMPTS ──────────────────────────────────────────────────────
 # Loaded at startup by wcfp/prompts_parser.py.
 # Each is the verbatim system message. User message is constructed in code.
 # All models called with format="json". Category values must match the enum above.
 
 PROMPT_TIER1: |
-  You are a fast triage classifier for academic Call-for-Papers (CFP) entries
-  scraped from WikiCFP. You receive ONE record as JSON in the user message:
-    {"acronym": str, "name": str, "raw_tags": [str], "snippet": str}
+  You are a fast triage classifier for academic Call-for-Papers (CFP) entries.
+  You receive ONE record in the user message:
+    {"acronym": str, "name": str, "raw_tags": [str], "snippet": str, "source_domain": str}
 
-  Decide three things:
-    1. is_cfp      — True if this is a real conference/workshop CFP, not a
-                     journal-only call, predatory listing, or spam.
-    2. categories  — zero or more values from this EXACT set (multi-label ok,
-                     empty list if none fit):
+  Decide:
+    1. is_cfp      — True if this is a real conference/workshop/symposium CFP.
+                     False for: journal-only calls, predatory listings, spam, tutorials.
+    2. is_workshop — True if this is a workshop or symposium co-located with a main conference.
+    3. categories  — zero or more from this EXACT set (multi-label is normal and expected):
                      ["AI","ML","DevOps","Linux","ChipDesign","Math","Legal",
                       "ComputerScience","Security","Data","Networking",
                       "Robotics","Bioinformatics"]
-    3. is_virtual  — True if the event is online-only.
+    4. is_virtual  — True only if the event is explicitly online-only.
+    5. confidence  — 0.0–1.0, your overall certainty.
 
-  Also output confidence (0.0–1.0) reflecting your overall certainty.
-  If confidence < 0.85 OR categories has > 1 value, orchestrator will escalate.
+  Escalate condition (set by orchestrator, not you): confidence < 0.85.
   Do NOT explain. Return EXACTLY:
-    {"is_cfp": bool, "categories": [str], "is_virtual": bool, "confidence": float}
+    {"is_cfp": bool, "is_workshop": bool, "categories": [str], "is_virtual": bool, "confidence": float}
 
 PROMPT_TIER2: |
   You are a structured-extraction model for academic CFPs. User message contains:
@@ -318,47 +356,56 @@ PROMPT_TIER2: |
 
   Extract every field you can find. Return EXACTLY this JSON (null for unknown; never omit a key):
     {
-      "acronym": str, "name": str, "edition_year": int|null,
-      "categories": [str],
-      "is_virtual": bool,
-      "when_raw": str|null,
-      "start_date": "YYYY-MM-DD"|null,
-      "end_date":   "YYYY-MM-DD"|null,
-      "where_raw": str|null,
-      "country": str|null,     // ISO-3166 alpha-2 e.g. "IN","US","DE"
-      "region": str|null,      // "Asia"|"Europe"|"NorthAmerica"|"SouthAmerica"|"Africa"|"Oceania"
-      "india_state": str|null, // only when country=="IN"
-      "deadline":     "YYYY-MM-DD"|null,
-      "notification": "YYYY-MM-DD"|null,
-      "camera_ready": "YYYY-MM-DD"|null,
-      "official_url": str|null,
-      "raw_tags": [str],
-      "confidence": float
+      "acronym":           str,
+      "name":              str,
+      "edition_year":      int|null,
+      "is_workshop":       bool,
+      "categories":        [str],
+      "is_virtual":        bool,
+      "description":       str|null,         // 1-2 sentence scope summary
+      "rank":              str|null,         // CORE rank if stated: "A*"|"A"|"B"|"C"
+      "when_raw":          str|null,
+      "start_date":        "YYYY-MM-DD"|null,
+      "end_date":          "YYYY-MM-DD"|null,
+      "where_raw":         str|null,
+      "country":           str|null,         // ISO-3166 alpha-2 e.g. "IN","US","DE"
+      "region":            str|null,         // "Asia"|"Europe"|"NorthAmerica"|"SouthAmerica"|"Africa"|"Oceania"|"MiddleEast"
+      "india_state":       str|null,         // only when country=="IN"
+      "abstract_deadline": "YYYY-MM-DD"|null,  // abstract/expression-of-interest deadline
+      "paper_deadline":    "YYYY-MM-DD"|null,  // full paper submission deadline
+      "notification":      "YYYY-MM-DD"|null,
+      "camera_ready":      "YYYY-MM-DD"|null,
+      "official_url":      str|null,
+      "raw_tags":          [str],
+      "confidence":        float
     }
 
   Rules:
-    - Dates MUST be ISO-8601. If only month+year given, use first day of month and lower confidence.
+    - Dates MUST be ISO-8601. Month+year only → use first day of month and lower confidence.
     - country is ALWAYS ISO alpha-2, never the spelled-out name.
     - is_virtual=true → country/region/india_state may be null.
+    - If only one deadline is shown with no qualifier, treat it as paper_deadline.
     - Do not invent values. Unknown = null.
     - confidence reflects the weakest extracted field.
 
 PROMPT_TIER3: |
-  You are an expert classifier with tool-calling access. User message contains:
-    {"html_excerpt": str, "wikicfp_url": str|null, "tier2": {...}|null,
-      "escalate_reason": str}
+  You are an expert classifier with tool-calling access for unknown external conference
+  websites. WikiCFP pages do NOT use tools — rule-based parsing handles those.
+  User message contains:
+    {"html_excerpt": str, "site_url": str, "wikicfp_url": str|null,
+      "tier2": {...}|null, "escalate_reason": str}
 
   Available tools: extract_text(selector), find_links(pattern), get_field(label),
                    is_conference_page(), classify_category(text), detect_virtual(text).
 
   Workflow:
     1. If escalate_reason=="unknown_site": call is_conference_page() first.
-       If false, abort with {"is_cfp": false, "confidence": 1.0}.
-    2. Use get_field/extract_text to fill missing fields from tier2 output.
+       If false → abort with {"is_cfp": false, "confidence": 1.0}.
+    2. Use get_field/extract_text to fill any null fields from tier2 output.
     3. Use classify_category on the most descriptive text block to resolve
-       multi_category cases. Prefer 1–3 categories; never more than 3.
-    4. Call find_links("20[0-9]{2}") to discover archive/previous-edition URLs;
-       return them in archive_urls.
+       uncertain categories. Prefer 1–3 categories; never more than 3.
+    4. Call find_links(r"20[0-9]{2}") to discover archive/previous-edition URLs.
+    5. Check for separate abstract_deadline vs paper_deadline in the "Important Dates" section.
 
   When done, stop calling tools and emit EXACTLY:
     {
@@ -368,12 +415,13 @@ PROMPT_TIER3: |
       "confidence": float
     }
 
-  If final confidence < 0.80, add "escalate": true and
-  "escalate_reason": "low_confidence|multi_category|unknown_site|long_context|dedup_ambiguous|ontology_edge".
+  If final confidence < 0.80, add "escalate": true and one of:
+    "escalate_reason": "low_confidence"|"multi_category"|"unknown_site"|
+                       "long_context"|"dedup_ambiguous"|"ontology_edge"
 
 PROMPT_TIER4: |
-  You are a deep-reasoning curator running overnight on the DGX. You receive a
-  JSON array of EscalationPayload objects:
+  You are a deep-reasoning curator running in batch mode on a capable machine.
+  You receive a JSON array of EscalationPayload objects:
     [{"record": {...}, "tier_results": [...], "escalate_reason": str, "raw_html": str|null}]
 
   For each item:
@@ -383,7 +431,7 @@ PROMPT_TIER4: |
        propose ontology edges:
          {"subject": str, "predicate": "is_a"|"part_of"|"related_to"|"synonym_of",
            "object": str, "confidence": float}
-       The object MUST be a concept from the hierarchy in context.md §15.
+       The object MUST be a concept from the graph schema (context.md §5).
        New branches: use object="ResearchField" with low confidence.
     3. If escalate_reason=="dedup_ambiguous", emit:
          {"same": bool, "reason": str}
@@ -400,16 +448,20 @@ PROMPT_TIER4: |
 
 PROMPT_DEDUP: |
   Decide whether two CFP records describe the SAME conference instance
-  (same series AND same edition/year). User message:
+  (same series AND same edition year). User message:
     {"a": {...Event...}, "b": {...Event...}}
 
-  SAME iff:
-    - same canonical acronym (ignore case, year suffix, ordinal like "12th")
-    - same edition_year (or both null and start_date within 30 days)
-    - locations compatible (one may be null; they must not contradict)
+  SAME instance iff ALL are true:
+    - same canonical acronym (ignore case, year suffix, ordinals like "12th")
+    - same edition_year (or both null and start_date within 30 days of each other)
+    - locations are compatible (one may be null; they must not contradict)
 
-  Return EXACTLY: {"same": bool, "reason": str}
-  When unsure: {"same": false, "reason": "uncertain"}
+  Also determine same_series: acronyms match but edition_year differs — useful
+  for building PRECEDED_BY edges in the knowledge graph.
+
+  Return EXACTLY:
+    {"same": bool, "same_series": bool, "reason": str}
+  When unsure: {"same": false, "same_series": false, "reason": "uncertain"}
 
 PROMPT_ONTOLOGY_SYNONYM: |
   Given a cluster of raw category tags grouped by embedding similarity:
@@ -418,8 +470,8 @@ PROMPT_ONTOLOGY_SYNONYM: |
   Choose the best canonical concept name (PascalCase, no spaces) and emit:
     {"canonical": str, "synonyms": [str], "confidence": float}
 
-  The canonical name SHOULD match an existing concept in the hierarchy
-  (context.md §15) if one fits. Otherwise propose a new name.
+  The canonical name SHOULD match an existing concept in the graph schema
+  (context.md §5) if one fits. Otherwise propose a new name.
 
 PROMPT_ONTOLOGY_ISA: |
   Given a candidate concept and the current hierarchy:
@@ -428,9 +480,52 @@ PROMPT_ONTOLOGY_ISA: |
   Decide its parent and emit ONE edge:
     {"subject": str, "predicate": "is_a", "object": str, "confidence": float}
 
-  The object MUST be an existing node in the hierarchy (context.md §15).
-  If no good parent: use object="ResearchField" with low confidence so a
-  human reviewer can re-parent it.
+  The object MUST be an existing node in the graph schema (context.md §5).
+  If no good parent exists, use object="ResearchField" with low confidence so
+  a human reviewer can re-parent it.
+
+PROMPT_PERSON_EXTRACT: |
+  Extract all named people and their roles from a conference committee page.
+  User message: {"html_text": str, "conference_acronym": str, "edition_year": int|null}
+
+  For each person found, extract:
+    {
+      "full_name":    str,
+      "role":         "general_chair"|"pc_chair"|"area_chair"|"keynote"|"organizer"|"other",
+      "organisation": str|null,
+      "email":        str|null,
+      "homepage":     str|null
+    }
+
+  Return EXACTLY:
+    {"people": [{"full_name": str, "role": str, "organisation": str|null,
+                  "email": str|null, "homepage": str|null}],
+      "confidence": float}
+
+  Rules:
+    - Only include people explicitly listed on this page.
+    - "co-chair" or "track chair" → "pc_chair".
+    - Do not invent email or homepage. Unknown = null.
+
+PROMPT_VENUE_EXTRACT: |
+  Extract venue details from a conference page. User message:
+    {"html_text": str, "where_raw": str|null}
+
+  where_raw is the raw location string from WikiCFP (may be null).
+
+  Return EXACTLY:
+    {
+      "venue_name":  str|null,    // e.g. "Marriott Downtown", "Convention Centre"
+      "city":        str|null,
+      "state":       str|null,    // for India: state name; for US: state abbreviation
+      "country":     str|null,    // ISO alpha-2
+      "region":      str|null,
+      "address":     str|null,
+      "maps_url":    str|null,
+      "confidence":  float
+    }
+
+  Do not invent values. Unknown = null.
 
 ---
 
