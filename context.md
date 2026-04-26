@@ -569,3 +569,111 @@ ollama rm qwen3:32b deepseek-r1:32b   # optional: free disk on profiles that won
 
 **Nothing is lost.** GCS holds the canonical pg_dump. Git holds reports and seed data.
 Re-running `bash setup.sh` on any machine restores full operational state.
+
+---
+
+## 19. Open Architectural Questions
+
+This section is a brief index of unresolved architectural questions that must be
+answered before the implementation is correct. Full analysis (with candidate
+answers, trade-offs, and recommendations) lives in `arch.md` Section 1.
+
+**Q1. PostgreSQL lifecycle.** Cloud SQL is incompatible with Apache AGE; Docker
+Compose works for one machine but cannot support concurrent sessions. The
+recommendation is to keep Docker Compose for local dev and add a StatefulSet+PVC
+variant for the future GKE pull→run→wipe Job. See `arch.md §1 Q1`.
+
+**Q2. Dedup trigger timing.** The spec says "pgvector ANN + DeepSeek-R1
+confirmation" but never says when. Recommendation: synchronous high-threshold
+(0.97) ANN check skips writes; 0.92–0.97 enqueue for async LLM confirmation;
+nightly `dedup-sweep` is the safety net. Add `DEDUP_AUTO_MERGE = 0.97` to
+`config.py`. See `arch.md §1 Q2`.
+
+**Q3. Ontology bootstrap.** First run has no Concept nodes; clustering and IS_A
+inference both need seeds. Recommendation: seed the 13 Category enum values as
+root Concepts under a `ResearchField` super-root, plus `RELATED_TO` cross-edges
+for cross-cutting concepts. Add a one-time `bootstrap-ontology` CLI command.
+See `arch.md §1 Q3`.
+
+**Q4. AGE ↔ PostgreSQL consistency.** Tension between "AGE is downstream of
+relational" (§13) and "AGE is the live ontology" (§14). Recommendation: add
+`concepts` and `concept_edges` relational tables shadowing the AGE ontology.
+Wrap PG and AGE writes in a single transaction (AGE Cypher runs in PG and is
+naturally transactional). Add `graph rebuild` and `graph verify` commands.
+See `arch.md §1 Q4`.
+
+**Q5. Dead-letter drain on small machines.** Tier 4 escalations accumulate on
+`gpu_mid` machines that cannot run DeepSeek-R1:70b. Recommendation: document
+the `tier4-cloud` escape hatch (RunPod / Lambda Labs spot rental triggered
+when queue exceeds 100). Reject silent quality degradation by lower-tier
+substitution. See `arch.md §1 Q5`.
+
+**Q6. Cross-source deduplication blocking strategy.** Same conference appears
+in WikiCFP, CFP emails, ai-deadlines.yml. Recommendation: per-record ANN top-5
+blocking + acronym-year blocking as a sanity check during nightly sweep. Merge
+policy: keep highest-confidence row, copy non-null fields from loser, mark
+loser `superseded_by` (do not delete). See `arch.md §1 Q6`.
+
+**Q7. Crawl throughput vs politeness.** Estimated first-run cost: ~5,680
+WikiCFP pages × 8 s mean delay ≈ 12.6 hours. Steady-state: ~30 min. Per-domain
+rate limit insufficient for shared-CDN external sites. Recommendation: keep
+Gaussian(8, 2.5) on first run; add per-CIDR /24 secondary limiter for Tier 3
+external scraping. See `arch.md §1 Q7`.
+
+**Q8. pgvector index strategy.** Recommendation: IVFFlat for the realistic
+project ceiling (50k–200k events). HNSW only if interactive query p95 latency
+exceeds 100 ms. Rebuild with `lists = floor(sqrt(N))` after every doubling.
+See `arch.md §1 Q8`.
+
+**Q9. Kubernetes vs Docker Compose.** Recommendation: write K8s manifests
+alongside Compose from v1.0; ship Compose as the default; activate K8s when
+multi-source parallel or scheduled-cloud-runs become needs. See `arch.md §1
+Q9` and §5.
+
+**Q10. Ollama model storage.** 51 GB total on `gpu_large`. Recommendation:
+named volume `ollama-models:/root/.ollama` for local dev; pre-baked profile-
+specific Docker images for GKE (per-node kubelet cache amortises pull). See
+`arch.md §1 Q10`.
+
+**Q11. Redis durability.** `wcfp:cursor:{source}` and `wcfp:dead` are
+operational by name but business-critical in practice. Recommendation: enable
+AOF persistence (`--appendonly yes`); mirror cursor to `sites.last_cursor` and
+dead-letter audit rows to PG. See `arch.md §1 Q11`.
+
+**Q12. LLM JSON-mode failure recovery.** Quantised models occasionally emit
+malformed JSON. Recommendation: local repair (json5/regex) → one same-tier
+retry with reminder preamble → escalate one tier. Track parse-failure rate
+per model in `wcfp:metrics:parse_fail:{model}`. See `arch.md §1 Q12`.
+
+**Q13. Cypher query cost ceiling.** Unbounded `*0..` traversals slow as
+ontology deepens and `CLASSIFIED_AS` edges grow. Recommendation: cap depth
+at `*0..6` defensively now; materialise `concept_descendants` transitive
+closure when graph exceeds 5k Concept nodes. See `arch.md §1 Q13`.
+
+**Q14. Quantisation policy.** Ollama's defaults silently pick Q4 quants on
+small VRAM, harming JSON validity. Recommendation: pin quantisation per
+profile in `PROFILE_MODELS` and add a weekly accuracy regression test.
+See `arch.md §1 Q14`.
+
+**Q15. Workshop entity modelling.** `Workshop` graph node vs `is_workshop`
+flag is ambiguous. Recommendation: drop the standalone Workshop label;
+workshops are events with `is_workshop=true` and optional `parent_event_id`.
+See `arch.md §1 Q15`.
+
+---
+
+## 20. Known Risks
+
+Brief register; full mitigations and ownership in `arch.md §2`.
+
+| # | Risk | Severity | Mitigation pointer |
+|---|------|----------|--------------------|
+| R1 | Apache AGE extension breaks across PG version upgrades | High | Pin image digest; maintain rebuild-from-relational script (`arch.md §2 R1`) |
+| R2 | WikiCFP IP block on first-run aggressive crawl | High | Keep Gaussian(8, 2.5); contactable User-Agent; honour robots.txt (`arch.md §2 R2`) |
+| R4 | GCS sync corruption (partial pg_dump upload) | High | Two-phase upload via staging key + `pg_restore --list` validation; bucket versioning N=7 (`arch.md §2 R4`) |
+| R5 | Spot GPU node preempted mid-run | High | Inflight TTL lease; idempotent `INSERT ... ON CONFLICT`; checkpoint Tier 4 every 10 records (`arch.md §2 R5`) |
+| R7 | Dead-letter accumulation on machines without DGX | High | `tier4-cloud` escape hatch; queue-depth alerting (`arch.md §2 R7`) |
+| R9 | Predatory or spam conferences pollute reports | High | New `PROMPT_QUALITY_GUARD`; static blocklist (`arch.md §2 R9`, `prompts.md`) |
+| R10 | Cross-source duplicates pollute reports | High | ANN+acronym blocking; nightly sweep (`arch.md §2 R10`) |
+| R13 | Cost overrun: GKE GPU node fails to scale down | High | K8s Job (auto-terminates); `min-nodes=0`; budget alert at $50/day (`arch.md §2 R13`) |
+| R14 | GCS credentials leaked in env vars or images | High | Workload Identity in K8s; ADC OAuth on laptops; pre-commit detect-secrets hook (`arch.md §2 R14`) |

@@ -314,6 +314,11 @@ PARSER: www.acm.org           -> wcfp.parsers.acm
 PARSER: link.springer.com     -> wcfp.parsers.springer
 PARSER: www.springer.com      -> wcfp.parsers.springer
 PARSER: www.usenix.org        -> wcfp.parsers.usenix
+PARSER: edas.info             -> wcfp.parsers.edas
+PARSER: easychair.org         -> wcfp.parsers.easychair
+PARSER: hotcrp.com            -> wcfp.parsers.hotcrp
+PARSER: cmt3.research.microsoft.com -> wcfp.parsers.cmt
+PARSER: openreview.net        -> wcfp.parsers.openreview
 
 ---
 
@@ -321,6 +326,19 @@ PARSER: www.usenix.org        -> wcfp.parsers.usenix
 
 # ai-deadlines YAML (scraped and merged with WikiCFP data)
 URL: https://raw.githubusercontent.com/paperswithcode/ai-deadlines/main/deadlines.yml
+
+# Conference submission portals (public CFP listings only — not submission tracking)
+URL: https://edas.info/listConferences.php
+URL: https://easychair.org/cfp/
+
+# IEEE conference listing
+URL: https://conferences.ieee.org/conferences_events/conferences/browse
+
+# CORE conference ranking portal
+URL: https://portal.core.edu.au/conf-ranks/?search=&by=all&source=CORE2023&sort=arank&page=1
+
+# Semantic Scholar — conference proceedings discovery
+URL: https://api.semanticscholar.org/graph/v1/paper/search?query=call+for+papers&fields=title,venue,year,externalIds
 
 ---
 
@@ -881,6 +899,41 @@ PROMPT_VENUE_EXTRACT: |
 
   Do not invent values. Unknown == null. Output ONE JSON object only.
   No prose, no code fences.
+
+---
+
+PROMPT_QUALITY_GUARD: |
+  You are a data quality gatekeeper. A candidate Event record has been extracted
+  by the pipeline and is about to be written to the database. Your job is to
+  catch obvious errors before they pollute the knowledge base.
+  User message: {"event": {...Event fields...}, "source_url": str, "tier_result": {...}}
+
+  Check for these specific failure modes:
+    1. predatory_publisher — Is this from a known predatory publisher or spam list?
+       Signal: vague scope, unusually high fees, no indexing info, generic venue.
+    2. journal_not_conference — Is this a journal CFP masquerading as a conference?
+       Signal: no start_date/end_date, no venue, "rolling submissions", no acronym.
+    3. invented_url — Does official_url look fabricated? It must not be a wikicfp.com URL.
+    4. wrong_rank — If rank is claimed (A*, A, B, C), does the conference name/acronym
+       plausibly match a CORE-ranked event? Be conservative — null is safer than wrong.
+    5. date_anomaly — Are the dates logically consistent?
+       (abstract_deadline ≤ paper_deadline ≤ notification ≤ camera_ready ≤ start_date)
+    6. location_contradiction — Does india_state contradict the city? 
+       E.g., city="Mumbai" but india_state="Tamil Nadu" is a contradiction.
+
+  Return EXACTLY:
+    {
+      "pass": bool,
+      "flags": ["predatory_publisher"|"journal_not_conference"|"invented_url"|
+                "wrong_rank"|"date_anomaly"|"location_contradiction"],
+      "severity": "block"|"warn"|"ok",
+      "reason": str|null
+    }
+
+  severity="block" → do not write to DB, send to dead-letter.
+  severity="warn"  → write to DB with quality_flag=true for human review.
+  severity="ok"    → pass (flags list may still be non-empty for logging).
+  If pass=true and flags=[], reason must be null.
 
 ---
 
