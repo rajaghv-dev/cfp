@@ -1,123 +1,179 @@
-# WikiCFP Conference Scraper
+# cfp — Conference Knowledge Pipeline
 
-Scrapes [WikiCFP](http://www.wikicfp.com) and collects conferences across categories and regions.
-After each scrape, Markdown reports are auto-generated in `reports/`.
-
----
-
-## Categories
-
-| Category | Keywords searched |
-|---|---|
-| AI | artificial intelligence, AI |
-| ML | machine learning, deep learning, neural network |
-| DevOps | devops, site reliability, platform engineering |
-| Linux | linux, open source, embedded linux |
-| ChipDesign | VLSI, chip design, EDA, FPGA, semiconductor, SoC |
-| Math | mathematics, mathematical, algebra, combinatorics, number theory |
-| Legal | law, legal, jurisprudence, cyber law, intellectual property |
+Scrape, classify, deduplicate, and query Call-for-Papers across the global
+academic conference circuit, with an LLM-curated knowledge graph and
+auto-generated Markdown reports.
 
 ---
 
-## Quick Start
+## What this is
+
+`cfp` is a self-hosted pipeline that scrapes [WikiCFP](http://www.wikicfp.com),
+[ai-deadlines](https://github.com/paperswithcode/ai-deadlines), Gmail CFP
+mailing lists, and other CFP sources, then classifies every event through a
+4-tier LLM cascade (Qwen3 4b → 14b → 32b → DeepSeek-R1) running locally on
+Ollama. Events, people, venues, and organisations are stored as first-class
+entities in PostgreSQL 16 with pgvector embeddings (and, in v2, an Apache AGE
+property graph for ontology + PC-chair-network queries). Markdown reports are
+regenerated from the database on every run, organised by category, region, and
+deadline. All persistent state lives in Google Cloud Storage; any single
+machine can pull state, run a session, sync back, and wipe local data without
+data loss.
+
+---
+
+## Quick start
 
 ```bash
-git clone <repo-url>
-cd wiki-cfp
-bash setup.sh
+git clone https://github.com/rajaghv-dev/cfp.git
+cd cfp
+WCFP_MACHINE=gpu_large GCS_BUCKET=wcfp-data bash setup.sh
 source .venv/bin/activate
+
+# v1 (current): standalone scraper still works
 python3 scraper.py
+
+# v1 (after wcfp/ package lands)
+python -m wcfp init-db
+python -m wcfp enqueue-seeds
+python -m wcfp run-pipeline
+python -m wcfp generate-reports
 ```
+
+`setup.sh` provisions venv + pip, brings up Docker (PostgreSQL 16 + Redis),
+pulls the Ollama models for your `WCFP_MACHINE` profile, and restores the
+latest `pg_dump` from GCS via rclone.
+
+Full lifecycle (pull → run → sync → wipe) is documented in `context.md §18`.
 
 ---
 
-## Usage
+## Machine profiles
 
-```
-python3 scraper.py [--pages N] [--md-only]
-```
+`WCFP_MACHINE` controls which LLM tiers run locally. Jobs whose required model
+is absent get pushed to `wcfp:escalate:tier4` and accumulate until the next
+session on a capable machine — nothing is lost.
 
-| Flag | Default | Description |
-|---|---|---|
-| `--pages N` | `3` | Max search-result pages per keyword |
-| `--md-only` | — | Skip scraping; regenerate reports from existing `data/latest.json` |
+| `WCFP_MACHINE` | Min VRAM | Tiers / Models                                                     |
+|----------------|----------|--------------------------------------------------------------------|
+| `dgx`          | 80 GB    | All tiers + `deepseek-r1:70b` for Tier 4                           |
+| `gpu_large`    | 24 GB    | Tiers 1–4 (`qwen3:4b` + `qwen3:14b` + `qwen3:32b` + `deepseek-r1:32b`) |
+| `gpu_mid`      | 10 GB    | Tiers 1–2 (`qwen3:4b` + `qwen3:14b`)                               |
+| `gpu_small`    | 4 GB     | Tier 1 only (`qwen3:4b`)                                           |
+| `cpu_only`     | —        | Tier 1 only (`qwen3:4b`, slow)                                     |
 
-Regenerate reports without re-scraping:
-
-```bash
-python3 scraper.py --md-only
-# or directly:
-python3 generate_md.py
-```
+`nomic-embed-text` runs on every profile (~300 MB VRAM or CPU fallback).
 
 ---
 
-## Generated Reports (`reports/`)
+## Architecture
 
-### By Category
+Three databases, three completely different roles. None can substitute for
+another.
 
-| File | Contents |
-|---|---|
-| `reports/ai.md` | AI — Artificial Intelligence |
-| `reports/ml.md` | ML — Machine Learning & Deep Learning |
-| `reports/devops.md` | DevOps & Site Reliability Engineering |
-| `reports/linux.md` | Linux & Open Source |
-| `reports/chipdesign.md` | Chip Design (VLSI / EDA / FPGA) |
-| `reports/math.md` | Mathematics |
-| `reports/legal.md` | Legal & Cyber Law |
+| Component                                | Role                                                       |
+|------------------------------------------|------------------------------------------------------------|
+| PostgreSQL 16 + pgvector + Apache AGE    | Source of truth — structured rows + vectors + graph (AGE in v2) |
+| DuckDB                                   | Analytics ONLY — reads PG via `postgres_scanner`, never writes |
+| Redis                                    | Queue + rate limiting ONLY — zero business data            |
+| GCS (rclone)                             | Off-machine persistence — `pg_dump` + Parquet + reports    |
 
-### By Date
-
-| File | Contents |
-|---|---|
-| `reports/by_date.md` | All conferences sorted by start date |
-
-### By Region
-
-| File | Contents |
-|---|---|
-| `reports/usa.md` | USA conferences |
-| `reports/europe.md` | European conferences (incl. UK & Switzerland) |
-| `reports/uk.md` | UK conferences |
-| `reports/singapore.md` | Singapore conferences |
-| `reports/switzerland.md` | Switzerland conferences |
-| `reports/india.md` | India conferences, **organised state-wise** |
-
-Each report has two sections — **Upcoming** (sorted earliest first) and **Past** (sorted most-recent first).
-Reports are regenerated on every scrape run, so past conferences are automatically moved to the Past section.
+Full spec in `context.md §3`. Open architectural questions in `arch.md §1`.
 
 ---
 
-## Data Files (`data/`)
+## LLM pipeline
 
-| File | Description |
-|---|---|
-| `data/latest.json` | Most recent run (always overwritten) |
-| `data/conferences_YYYYMMDD_HHMMSS.json` | Timestamped run archive |
-| `data/conferences_YYYYMMDD_HHMMSS.csv` | Same data in CSV format |
+| Tier | Model               | Confidence gate | Role                                         |
+|------|---------------------|-----------------|----------------------------------------------|
+| 1    | `qwen3:4b`          | ≥ 0.85          | Triage: is_cfp + categories + is_virtual     |
+| 2    | `qwen3:14b`         | ≥ 0.85          | Full Event + Person[] + Venue + Organisation[] |
+| 3    | `qwen3:32b`         | ≥ 0.80          | Tool calling for unknown external sites      |
+| 4    | `deepseek-r1:70b`   | always final    | Overnight batch + ontology inference (v2)    |
 
-Each entry:
+Tool calling is Qwen3-only. DeepSeek-R1 is pure reasoning — used for dedup
+yes/no decisions and the Tier 4 batch. Embeddings via `nomic-embed-text`
+(768-d, written to `event_embeddings`/`concept_embeddings` pgvector columns).
 
-```json
-{
-  "acronym": "NeurIPS 2026",
-  "name": "Neural Information Processing Systems",
-  "category": "ML",
-  "keywords": ["machine learning", "deep learning"],
-  "when": "Dec 6, 2026 - Dec 12, 2026",
-  "where": "Vancouver, Canada",
-  "deadline": "May 15, 2026",
-  "url": "http://www.wikicfp.com/cfp/..."
-}
-```
+---
+
+## Generated reports (`reports/`)
+
+13 Markdown reports — regenerated on every run.
+
+### By category
+
+| File                     | Contents                                              |
+|--------------------------|-------------------------------------------------------|
+| `reports/ai.md`          | AI — Artificial Intelligence                          |
+| `reports/ml.md`          | ML — Machine Learning & Deep Learning                 |
+| `reports/devops.md`      | DevOps & Site Reliability Engineering                 |
+| `reports/linux.md`       | Linux & Open Source                                   |
+| `reports/chipdesign.md`  | Chip Design — VLSI / EDA / FPGA / Semiconductor       |
+| `reports/math.md`        | Mathematics                                           |
+| `reports/legal.md`       | Legal, Cyber Law & Intellectual Property              |
+
+### By date
+
+| File                  | Contents                                       |
+|-----------------------|------------------------------------------------|
+| `reports/by_date.md`  | All conferences sorted by start date           |
+
+### By region
+
+| File                       | Contents                                              |
+|----------------------------|-------------------------------------------------------|
+| `reports/usa.md`           | USA conferences                                       |
+| `reports/europe.md`        | European conferences (incl. UK & Switzerland)         |
+| `reports/uk.md`            | UK conferences                                        |
+| `reports/singapore.md`     | Singapore conferences                                 |
+| `reports/switzerland.md`   | Switzerland conferences                               |
+| `reports/india.md`         | India conferences, **organised state-wise**           |
+
+Each report has two sections — **Upcoming** (sorted earliest first) and
+**Past** (sorted most-recent first). Past conferences age out of Upcoming
+automatically on every run.
+
+---
+
+## Project structure
+
+| File / dir              | Role                                                                         |
+|-------------------------|------------------------------------------------------------------------------|
+| `CLAUDE.md`             | Standing instructions for Claude Code (auto-loaded)                          |
+| `context.md`            | 20-section architecture spec — source of truth for code generation           |
+| `arch.md`               | Deep analysis — 15 open questions, 18 risks, 8 ADRs, 12 suggestions, K8s spec |
+| `prompts.md`            | All 12 LLM system prompts + search queries + parser registry                 |
+| `lesson_plan.md`        | 14-module learning curriculum + A–Z glossary                                 |
+| `codegen/`              | One Markdown spec per module — read before implementing                      |
+| `memory/`               | Session memory files (travel with the repo; mirror to `~/.claude/`)          |
+| `SESSION.md`            | Current session state — read at the start of every session                   |
+| `setup.sh`              | Clone + venv + pip + Docker + rclone pull + Ollama pull                      |
+| `scraper.py`            | Standalone v1 WikiCFP scraper (deleted once `wcfp/parsers/wikicfp.py` lands) |
+| `generate_md.py`        | Markdown report generator (replaced by `wcfp/analytics.py` driver)           |
+
+---
+
+## Development status
+
+**v1 is in progress.** The `wcfp/` package does not yet exist — only the
+standalone `scraper.py` + `generate_md.py` are runnable today. Codegen specs
+01, 04, 05, 09, 11 are written; specs 02, 03, 06, 07, 08, 10, 12–17 are still
+to be authored. Implementation order is documented in `SESSION.md`.
+
+v2 is an additive migration that adds Apache AGE (graph + Cypher),
+DeepSeek-R1 dedup confirmation, Tier 3 + Tier 4, the DuckDB analytics layer,
+and the OWL ontology pipeline. v2 does not require a rewrite — it switches
+the Docker image from `pgvector/pgvector:pg16` to `apache/age:PG16_latest`
+and adds the new modules.
 
 ---
 
 ## Requirements
 
-- Python 3.10+
-- `requests`, `beautifulsoup4`, `lxml` (installed by `setup.sh`)
+- Python 3.11+
+- Docker (for PostgreSQL + Redis containers)
+- Ollama (single local daemon at `OLLAMA_HOST`, default `http://localhost:11434`)
+- rclone (for GCS pull/push of `pg_dump` + Parquet snapshots)
 
----
-
-Last setup: —
+Python deps: see `requirements.txt`.
