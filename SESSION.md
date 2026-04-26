@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Local path** | `/home/raja/wiki-cfp` |
+| **Local path** | `/home/raja/cfp` |
 | **GitHub** | https://github.com/rajaghv-dev/cfp |
 | **Branch** | `main` |
 | **Clone command** | `bash setup.sh https://github.com/rajaghv-dev/cfp.git` |
@@ -18,15 +18,16 @@
 
 ## What This Is
 
-Conference knowledge pipeline: scrapes WikiCFP + ai-deadlines + more sources,
-classifies via 4-tier LLM pipeline (Qwen3 4b→14b→32b + DeepSeek-R1 70b),
-stores in PostgreSQL + pgvector + Apache AGE knowledge graph, generates Markdown reports.
+Conference knowledge pipeline: scrapes WikiCFP + ai-deadlines + email (Gmail API) + more sources,
+classifies via 4-tier LLM pipeline (Qwen3 4b→14b→32b + DeepSeek-R1 32b/70b),
+stores in PostgreSQL 16 + pgvector + Apache AGE knowledge graph, generates Markdown reports.
 
 People, venues, organisations, ontology concepts are all first-class graph nodes.
+All persistent data lives in GCS. Local state is always ephemeral.
 
 ---
 
-## Architecture (final — do not re-discuss)
+## Architecture
 
 | Component | Role |
 |---|---|
@@ -37,9 +38,11 @@ People, venues, organisations, ontology concepts are all first-class graph nodes
 | DeepSeek-R1 (32b/70b) | Dedup reasoning + Tier 4 batch. No tool calling. |
 | nomic-embed-text | 768-d embeddings → pgvector |
 | GCS (rclone) | Off-machine persistence: pg_dump + Parquet + reports |
-| Single machine | Any single machine with Docker + Ollama. WCFP_MACHINE profile controls which tiers run. |
+| Single machine | Any machine with Docker + Ollama. WCFP_MACHINE profile controls tiers. |
 
-Full spec: `context.md` · All LLM prompts: `prompts.md`
+Machine lifecycle: **pull from GCS → restore → run → sync to GCS → full local wipe.**
+
+Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Learning: `lesson_plan.md`
 
 ---
 
@@ -53,65 +56,113 @@ Full spec: `context.md` · All LLM prompts: `prompts.md`
 | `gpu_small` | 4 GB | Tier 1 only (qwen3:4b) |
 | `cpu_only` | — | Tier 1 only (qwen3:4b, slow) |
 
+`nomic-embed-text` runs on all profiles (300 MB VRAM / CPU fallback).
+
 ---
 
 ## Current File State
 
-### Working (do not break)
+### Complete and working (do not break)
 | File | Status | Notes |
 |---|---|---|
 | `scraper.py` | ✅ Working | WikiCFP BS4 scraper — paired-row parser is correct |
 | `generate_md.py` | ✅ Working | India state-wise reports — location taxonomy is correct |
-| `prompts.md` | ✅ Complete | All search queries + 7 LLM prompt bodies |
-| `context.md` | ✅ Complete | 19-section architecture spec |
-| `data/latest.json` | ✅ Seed data | 350 conferences — used to seed PostgreSQL |
+| `data/latest.json` | ✅ Seed data | 350 conferences — used to seed PostgreSQL on first run |
 | `reports/*.md` | ✅ Generated | 13 Markdown reports |
-| `setup.sh` | ✅ Updated | Clone + venv + pip + optional Ollama pull |
 
-### Partially created (codegen specs only — no implementation yet)
-| File | Status |
+### Documentation (complete)
+| File | Lines | Notes |
+|---|---|---|
+| `CLAUDE.md` | 78 | Standing session instructions — auto-loaded by Claude Code |
+| `context.md` | 679 | 20-section architecture spec (§19 open questions, §20 risks) |
+| `arch.md` | 1,210 | 15 open questions · 18 risks · 8 ADRs · 12 suggestions · K8s spec |
+| `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
+| `lesson_plan.md` | 912 | 14-module learning curriculum + A–Z glossary |
+| `SESSION.md` | this | Current state |
+| `setup.sh` | — | Clone + venv + pip + optional Ollama pull |
+
+### Codegen specs (written — no implementation yet)
+| File | Covers |
 |---|---|
-| `arch.md` | ✅ Created — 15 open questions, risk register, ADRs, K8s spec |
-| `lesson_plan.md` | ✅ Created — 14-module learning curriculum + glossary |
-| `codegen/00_HOWTO.md` | ✅ Created |
-| `codegen/01_config_models.md` | ✅ Created — spec for config.py + wcfp/models.py |
-| `codegen/04_wikicfp_parser.md` | ✅ Created — spec for wcfp/parsers/ |
-| `codegen/05_db_schema.md` | ✅ Created — spec for wcfp/db.py |
-| `codegen/09_llm_client.md` | ✅ Created — spec for wcfp/llm/client.py + tools.py |
-| `codegen/11_analytics_generate.md` | ✅ Created — spec for analytics.py + generate_md.py |
-| `codegen/02,03,06,07,08,10,12,13,14` | 🔲 Not yet created |
+| `codegen/00_HOWTO.md` | How to use the codegen files |
+| `codegen/01_config_models.md` | `config.py` + `wcfp/models.py` |
+| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` |
+| `codegen/05_db_schema.md` | `wcfp/db.py` |
+| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` |
+| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` |
 
-### Not yet created (wcfp/ package)
-Everything in `wcfp/` is still missing. All files described in `codegen/` specs.
+### Codegen specs — NOT YET WRITTEN
+| Spec | Module |
+|---|---|
+| `codegen/02` | `wcfp/prompts_parser.py` |
+| `codegen/03` | `wcfp/fetch.py` |
+| `codegen/06` | `wcfp/graph.py` (Apache AGE) |
+| `codegen/07` | `wcfp/queue.py` (Redis) |
+| `codegen/08` | `wcfp/vectors.py` + `wcfp/embed.py` |
+| `codegen/10` | `wcfp/llm/tier1..4.py` |
+| `codegen/12` | `wcfp/pipeline.py` + `wcfp/cli.py` |
+| `codegen/13` | `setup.sh` + `docker-compose.yml` + `Makefile` |
+| `codegen/14` | `AGENTS.md` + `PATTERNS.md` |
+| `codegen/15` | `wcfp/dedup.py` |
+| `codegen/16` | `wcfp/sync.py` |
+| `codegen/17` | `wcfp/ontology.py` |
+
+### Implementation — NOT YET STARTED
+`wcfp/` package does not exist. All modules are unimplemented.
 
 ---
 
-## Next Session: Implement the wcfp/ Package
+## Blocking Arch Questions (must resolve before coding these modules)
 
-### Step 1 — Create foundation files
-Use `codegen/01_config_models.md` → create `config.py` and `wcfp/models.py`
+| Question | Blocks |
+|---|---|
+| Q4 — AGE consistency (derived tables vs authoritative) | `wcfp/graph.py` |
+| Q6 — Cross-source dedup trigger timing | `wcfp/dedup.py` |
+| Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` |
+| Q12 — JSON-mode failure retry budget | `wcfp/llm/client.py` |
+| Q14 — Quantisation policy per WCFP_MACHINE profile | `config.py` |
+| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` |
 
-### Step 2 — Create remaining codegen specs (02, 03, 06, 07, 08, 10, 12, 13, 14)
-These were not created yet. Create them before implementing (see Plan agent output in conversation).
+Full question details + recommended answers: `arch.md §1`
 
-### Step 3 — Implement in dependency order
+---
+
+## Next Steps (in order)
+
+1. **Resolve blocking arch questions** (Q4, Q15 first — both hit `wcfp/models.py`)
+2. **Write missing codegen specs** (02, 03, 06, 07, 08, 10, 12, 13, 14, 15, 16, 17)
+3. **Implement in dependency order** (see below)
+4. **Delete `scraper.py`** after `wcfp/parsers/wikicfp.py` is verified working
+
+### Implementation order
 ```
-config.py + wcfp/models.py          ← codegen/01
-wcfp/prompts_parser.py              ← codegen/02
-wcfp/fetch.py                       ← codegen/03
-wcfp/parsers/                       ← codegen/04
-wcfp/db.py                          ← codegen/05
-wcfp/graph.py                       ← codegen/06
-wcfp/queue.py                       ← codegen/07
-wcfp/vectors.py + wcfp/embed.py     ← codegen/08
-wcfp/llm/                           ← codegen/09 + 10
-wcfp/analytics.py + generate_md.py ← codegen/11
-wcfp/pipeline.py + wcfp/cli.py      ← codegen/12
-setup.sh + docker-compose + Makefile ← codegen/13
-AGENTS.md + PATTERNS.md             ← codegen/14
+config.py + wcfp/models.py          ← spec 01  ← start here
+wcfp/prompts_parser.py              ← spec 02
+wcfp/fetch.py                       ← spec 03
+wcfp/parsers/ (wikicfp + ai_deadlines) ← spec 04
+wcfp/db.py                          ← spec 05
+wcfp/graph.py                       ← spec 06  (needs Q4 resolved)
+wcfp/queue.py                       ← spec 07
+wcfp/vectors.py + wcfp/embed.py     ← spec 08
+wcfp/llm/client.py + tools.py       ← spec 09
+wcfp/llm/tier1..4.py               ← spec 10
+wcfp/analytics.py + generate_md.py ← spec 11
+wcfp/dedup.py                       ← spec 15  (needs Q6 resolved)
+wcfp/sync.py                        ← spec 16
+wcfp/ontology.py                    ← spec 17
+wcfp/pipeline.py + wcfp/cli.py     ← spec 12
+setup.sh + docker-compose + Makefile ← spec 13
+AGENTS.md + PATTERNS.md             ← spec 14
 ```
 
-### Step 4 — Delete scraper.py (after wcfp/parsers/wikicfp.py is implemented)
+### Enhancements (after v1 ships)
+- Gmail integration (`wcfp/parsers/email_gmail.py`)
+- EDAS / EasyChair / OpenReview parsers
+- Kubernetes migration (spec in `arch.md §5`)
+- Health check endpoint (FastAPI)
+- Predatory publisher blocklist
+- Prometheus + Grafana observability
+- lesson_plan.md Modules 14–21 (async, BS4, HTTP, testing, Docker, git, scraping ethics)
 
 ---
 
@@ -129,24 +180,22 @@ AGENTS.md + PATTERNS.md             ← codegen/14
 
 ---
 
-## Merged From: conf-scr-org-syn
+## Patterns to Carry Forward (from conf-scr-org-syn repo)
 
-Repo analyzed: https://github.com/rajaghv-dev/conf-scr-org-syn  
-Clone at: /tmp/conf-scr-org-syn (may need to re-clone)
-
-Key patterns to incorporate — all captured in codegen specs:
-- `_is_english()` filter → `wcfp/parsers/wikicfp.py`
-- `_safe_parse_date()` dateutil fuzzy → `wcfp/parsers/wikicfp.py`
-- Abstract+paper deadline regex → `wcfp/parsers/wikicfp.py`
-- COALESCE upsert → `wcfp/db.py`
-- `_parse_json_response()` 3-level fallback → `wcfp/llm/client.py`
-- `_strip_thinking()` → `wcfp/llm/client.py`
-- `slug` + `days_to_deadline` properties → `wcfp/models.py`
-- `to_markdown()` → `wcfp/models.py`
-- `## Notes` preservation → `generate_md.py`
-- `scrape_ai_deadlines()` YAML → `wcfp/parsers/ai_deadlines.py`
-- Rich CLI deadline coloring → `wcfp/cli.py`
-- PATTERNS.md deadline statistics → `PATTERNS.md`
+| Pattern | Destination |
+|---|---|
+| `_is_english()` filter | `wcfp/parsers/wikicfp.py` |
+| `_safe_parse_date()` dateutil fuzzy | `wcfp/parsers/wikicfp.py` |
+| Abstract + paper deadline regex | `wcfp/parsers/wikicfp.py` |
+| COALESCE upsert | `wcfp/db.py` |
+| `_parse_json_response()` 3-level fallback | `wcfp/llm/client.py` |
+| `_strip_thinking()` | `wcfp/llm/client.py` |
+| `slug` + `days_to_deadline` properties | `wcfp/models.py` |
+| `to_markdown()` | `wcfp/models.py` |
+| `## Notes` preservation | `generate_md.py` |
+| `scrape_ai_deadlines()` YAML | `wcfp/parsers/ai_deadlines.py` |
+| Rich CLI deadline coloring | `wcfp/cli.py` |
+| PATTERNS.md deadline statistics | `PATTERNS.md` |
 
 ---
 
@@ -154,12 +203,16 @@ Key patterns to incorporate — all captured in codegen specs:
 
 | Need | Where |
 |---|---|
-| Standing instructions | `CLAUDE.md` |
-| Architecture | `context.md` (19 sections) |
-| LLM prompts | `prompts.md` (PROMPT_TIER1..4, PROMPT_DEDUP, etc.) |
+| Standing session instructions | `CLAUDE.md` |
+| Architecture spec | `context.md` (20 sections) |
+| Deep arch analysis + open questions | `arch.md` |
+| All LLM prompts (12 total) | `prompts.md` |
+| Learning guide | `lesson_plan.md` |
 | How to implement | `codegen/00_HOWTO.md` |
 | Data models spec | `codegen/01_config_models.md` |
 | PostgreSQL schema | `codegen/05_db_schema.md` |
 | Graph schema | `context.md §5` |
 | Redis keys | `context.md §8` |
+| Machine lifecycle | `context.md §18` |
+| Kubernetes spec | `arch.md §5` |
 | Clone + setup | `bash setup.sh https://github.com/rajaghv-dev/cfp.git` |
