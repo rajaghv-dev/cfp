@@ -21,22 +21,24 @@ v1 scope defined in `arch.md §6`. Nothing in `wcfp/` exists yet.
 ### Documentation — complete
 | File | Lines | Notes |
 |---|---|---|
-| `CLAUDE.md` | 78 | Session instructions — auto-loaded by Claude Code |
-| `context.md` | 679 | 20-section architecture spec |
-| `arch.md` | 1,477 | 15 questions · 18 risks · 8 ADRs · 15 suggestions · K8s spec · v1/v2 scope split |
+| `CLAUDE.md` | 80 | Session instructions — auto-loaded by Claude Code |
+| `context.md` | 687 | 20-section spec — v1/v2 annotations, Q15 resolved, DGX/Workshop refs fixed |
+| `arch.md` | 1,479 | 15 questions (Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions · K8s spec · v1/v2 scope |
 | `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
-| `lesson_plan.md` | 912 | 14-module learning curriculum + A–Z glossary |
+| `lesson_plan.md` | 1,659 | **35-module** curriculum + expanded A–Z glossary |
+| `requirements.txt` | 40 | Full v1 deps; v2-only commented out |
+| `README.md` | 179 | Current project README with architecture + quick start |
 | `SESSION.md` | — | Priority to-do list + current state |
 | `.env.example` | 35 | All env vars with defaults |
 
-### Codegen specs — written (reviewed 2026-04-26)
-| File | Covers | Known issues |
+### Codegen specs — written and reviewed (all reviewed 2026-04-26)
+| File | Covers | Status |
 |---|---|---|
-| `codegen/01` | `config.py` + `wcfp/models.py` | Clean — single OLLAMA_HOST, paper_deadline, is_workshop |
-| `codegen/04` | `wcfp/parsers/` | Still emits `Event(deadline=…)` — patch before implementing |
-| `codegen/05` | `wcfp/db.py` | Clean — all new columns, scrape_sessions table |
-| `codegen/09` | `wcfp/llm/client.py` + `tools.py` | Clean — single OLLAMA_HOST import |
-| `codegen/11` | `wcfp/analytics.py` + `generate_md.py` | SQL uses `deadline::VARCHAR` — patch before implementing |
+| `codegen/01` | `config.py` + `wcfp/models.py` | ✅ Clean |
+| `codegen/04` | `wcfp/parsers/` | ✅ Patched — `paper_deadline=` throughout |
+| `codegen/05` | `wcfp/db.py` | ✅ Clean — all new columns, scrape_sessions table |
+| `codegen/09` | `wcfp/llm/client.py` + `tools.py` | ✅ Clean — single OLLAMA_HOST |
+| `codegen/11` | `wcfp/analytics.py` + `generate_md.py` | ✅ Patched — `paper_deadline::VARCHAR` in SQL |
 
 ### Codegen specs — NOT written yet
 `02` (prompts_parser) · `03` (fetch.py) · `07` (queue.py) · `08` (vectors+embed) ·
@@ -73,9 +75,9 @@ In order (each may depend on the previous):
 
 ---
 
-### P2 — Patch known issues in written specs
-- [ ] Spec 04: rename all `Event(deadline=…)` → `Event(paper_deadline=…)` throughout
-- [ ] Spec 11: rename `deadline::VARCHAR` → `paper_deadline::VARCHAR` in SQL queries
+### P2 — Patch known issues in written specs ✅ COMPLETE (2026-04-26)
+- [x] Spec 04: `paper_deadline=` throughout — done
+- [x] Spec 11: `paper_deadline::VARCHAR` in SQL — done
 
 ---
 
@@ -106,8 +108,8 @@ In order (each may depend on the previous):
 
 ### P5 — v1 completion and validation
 - [ ] Run v1 with real data weekly for 1 month
-- [ ] Add lesson_plan.md Modules 14–21 (async Python, BS4, HTTP semantics, date parsing, Docker, git workflow, scraping ethics, testing strategy)
-- [ ] Write `tests/` directory: pytest fixtures from real WikiCFP HTML, contract tests per LLM prompt schema
+- [x] lesson_plan.md Modules 14–35 — done 2026-04-26 (22 new modules covering async, BS4, HTTP, dates, Docker, git, ethics, testing, packaging, type hints, regex, YAML/JSON, CLI, logging, rclone, Makefile, conference ecosystem, OWL/Protege, pgBouncer, concurrency, backoff)
+- [ ] `tests/` directory: pytest fixtures from real WikiCFP HTML, contract tests per LLM prompt schema
 
 ---
 

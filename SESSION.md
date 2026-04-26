@@ -29,16 +29,17 @@ All persistent data lives in GCS. Local state is always ephemeral.
 
 ## Architecture
 
-| Component | Role |
-|---|---|
-| PostgreSQL 16 + pgvector + Apache AGE | Source of truth (structured + vectors + graph) |
-| DuckDB | Analytics ONLY — reads PG via postgres_scanner, never writes |
-| Redis | Queue + rate limiting ONLY — zero business data |
-| Qwen3 (4b/14b/32b) | Tier 1–3: classification + tool calling. Ollama only. |
-| DeepSeek-R1 (32b/70b) | Dedup reasoning + Tier 4 batch. No tool calling. |
-| nomic-embed-text | 768-d embeddings → pgvector |
-| GCS (rclone) | Off-machine persistence: pg_dump + Parquet + reports |
-| Single machine | Any machine with Docker + Ollama. WCFP_MACHINE profile controls tiers. |
+| Component | v1 | v2 | Role |
+|---|---|---|---|
+| PostgreSQL 16 + pgvector | ✅ | ✅ | Source of truth — structured + vectors |
+| Apache AGE (graph) | — | ✅ | Knowledge graph + live ontology |
+| DuckDB | — | ✅ | Analytics ONLY — reads PG via postgres_scanner |
+| Redis | ✅ | ✅ | Queue + rate limiting ONLY — zero business data |
+| Qwen3 4b + 14b | ✅ | ✅ | Tiers 1–2: triage + extraction |
+| Qwen3 32b + DeepSeek-R1 | — | ✅ | Tiers 3–4: tool-calling + batch reasoning |
+| nomic-embed-text | ✅ | ✅ | 768-d embeddings → pgvector |
+| GCS (rclone) | ✅ | ✅ | Off-machine persistence: pg_dump + reports |
+| Single machine | ✅ | ✅ | Any machine with Docker + Ollama. WCFP_MACHINE profile controls tiers. |
 
 Machine lifecycle: **pull from GCS → restore → run → sync to GCS → full local wipe.**
 
@@ -73,12 +74,15 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 ### Documentation (complete)
 | File | Lines | Notes |
 |---|---|---|
-| `CLAUDE.md` | 78 | Standing session instructions — auto-loaded by Claude Code |
-| `context.md` | 679 | 20-section architecture spec (§19 open questions, §20 risks) |
-| `arch.md` | 1,210 | 15 open questions · 18 risks · 8 ADRs · 12 suggestions · K8s spec |
+| `CLAUDE.md` | 80 | Standing session instructions — auto-loaded by Claude Code |
+| `context.md` | 687 | 20-section architecture spec — v1/v2 annotations, Q15 resolved |
+| `arch.md` | 1,479 | 15 questions · 18 risks · 8 ADRs · 15 suggestions · K8s spec · v1/v2 scope split |
 | `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
-| `lesson_plan.md` | 912 | 14-module learning curriculum + A–Z glossary |
-| `SESSION.md` | this | Current state |
+| `lesson_plan.md` | 1,659 | 35-module learning curriculum + expanded A–Z glossary |
+| `requirements.txt` | 40 | Full v1 deps grouped by purpose; v2-only deps commented out |
+| `README.md` | 179 | Current project README with architecture + quick start |
+| `.env.example` | 35 | All env vars with defaults and comments |
+| `SESSION.md` | this | Current state + priority to-do list |
 | `setup.sh` | — | Clone + venv + pip + optional Ollama pull |
 
 ### Codegen specs (written — no implementation yet)
@@ -86,10 +90,10 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 |---|---|---|
 | `codegen/00_HOWTO.md` | How to use the codegen files | — |
 | `codegen/01_config_models.md` | `config.py` + `wcfp/models.py` | 2026-04-26 (gap audit: OLLAMA_HOST single, paper_deadline, is_workshop, sponsor_names, scrape_session_id, PersonRole.ORGANIZER/OTHER, OrgType.OTHER) |
-| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` | — (note: still emits `Event(deadline=…)` — must rename to `paper_deadline` at implementation time) |
-| `codegen/05_db_schema.md` | `wcfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, quality_severity, scrape_sessions table + FK, sites.last_cursor, COALESCE policy split) |
-| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: OLLAMA_HOST/PROFILE_MODELS imports, single-host OllamaClient, get_available_models, profile_intersection) |
-| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` | — (note: SELECT still references `deadline::VARCHAR` — must update to `paper_deadline::VARCHAR`) |
+| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` | 2026-04-26 (patched: `paper_deadline=` throughout; `_parse_deadline_cell` correct) |
+| `codegen/05_db_schema.md` | `wcfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, scrape_sessions table, sites.last_cursor) |
+| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: single OLLAMA_HOST, get_available_models, profile_intersection) |
+| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` | 2026-04-26 (patched: `paper_deadline::VARCHAR` in SQL; all deadline refs updated) |
 
 ### Codegen specs — NOT YET WRITTEN
 | Spec | Module |
@@ -121,7 +125,7 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` | open |
 | Q12 — JSON-mode failure retry budget | `wcfp/llm/client.py` | open |
 | Q14 — Quantisation policy per WCFP_MACHINE profile | `config.py` | open |
-| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` | **PARTIALLY RESOLVED** — `is_workshop=True` flag is now on `Event`; standalone `Workshop` graph node will be dropped from `context.md §5` when v2 graph spec is finalised |
+| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` | ✅ **RESOLVED 2026-04-26** — `is_workshop` flag on Event; `Workshop` graph node dropped from v1 (context.md §5 updated) |
 
 Full question details + recommended answers: `arch.md §1`
 
@@ -148,9 +152,9 @@ Full answers + recommendations: `arch.md §1`
 - [ ] `codegen/10` — `wcfp/llm/tier1.py` + `tier2.py`
 - [ ] `codegen/12` — `wcfp/pipeline.py` + `wcfp/cli.py`
 
-### P2 — Patch stale written specs
-- [ ] Spec 04: rename `Event(deadline=…)` → `Event(paper_deadline=…)` throughout
-- [ ] Spec 11: rename `deadline::VARCHAR` → `paper_deadline::VARCHAR` in SQL
+### P2 — Patch stale written specs ✅ COMPLETE
+- [x] Spec 04: `paper_deadline=` throughout — done 2026-04-26
+- [x] Spec 11: `paper_deadline::VARCHAR` in SQL — done 2026-04-26
 
 ### P3 — Ontology seed (small, hand-authored)
 - [ ] Create `ontology/seed_concepts.json` (13 Category values + ~50 subconcepts)
@@ -177,7 +181,7 @@ spec 11  wcfp/analytics.py + generate_md.py
 
 ### P5 — v1 validation + completion
 - [ ] Run v1 weekly for 1 month with real data
-- [ ] lesson_plan.md Modules 14–21 (async, BS4, HTTP, date parsing, Docker, git, ethics, testing)
+- [x] lesson_plan.md Modules 14–35 — done 2026-04-26 (async, BS4, HTTP, date, Docker, git, ethics, testing, packaging, type hints, regex, YAML, CLI, logging, rclone, Makefile, conference ecosystem, OWL, pgBouncer, concurrency, backoff)
 - [ ] `tests/` directory with pytest fixtures from real WikiCFP HTML
 
 ### P6 — Enhancements (post-v1)
