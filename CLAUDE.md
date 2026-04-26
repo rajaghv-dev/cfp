@@ -16,6 +16,7 @@ Every session MUST begin with:
 2. Read `arch.md §1` — 15 open questions; do not implement anything that touches an
    unresolved question without first answering it and recording the decision
 3. If the user mentions a task not tracked in SESSION.md, ask if it should be added
+4. Memory files are in `memory/` — part of the repo. They update automatically with `git pull`. Do not look for memory only in local ~/.claude/ — the repo copy is canonical.
 
 ## Standing Behaviours (apply every session, never ask for permission)
 
@@ -69,6 +70,7 @@ Every session MUST begin with:
 | `CLAUDE.md` | This file — standing instructions | When user adds new standing behaviour |
 | `lesson_plan.md` | Learning guide for the user | When adding new concepts or user asks to learn |
 | `codegen/*.md` | Code generation specs | Before implementing each module |
+| `memory/*.md` | Session memory — travels with repo | At end of every session (sync to local ~/.claude/ too) |
 
 ## What NOT To Do
 - Do not implement a module without a codegen spec

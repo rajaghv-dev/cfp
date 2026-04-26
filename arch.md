@@ -507,6 +507,8 @@ first-class entities or a flag on events?
    relationship to its host conference. Better matches reality (many workshops
    have their own websites, chairs, deadlines).
 
+**STATUS: RESOLVED 2026-04-26.** Implemented Option 1.
+
 **RECOMMENDED.** Option 1 for v1. Workshops are events with `is_workshop=true`
 and an optional `parent_event_id` (FK self-reference). Drop the standalone
 `Workshop` label from `context.md §5` to remove ambiguity. Revisit if workshops

@@ -193,15 +193,6 @@ spec 11  wcfp/analytics.py + generate_md.py
 - [ ] DuckDB analytics layer, ontology pipeline (`wcfp/ontology.py`)
 - [ ] Kubernetes manifests (`arch.md §5` — ~$85/mo on GKE)
 
-### Enhancements (after v1 ships)
-- Gmail integration (`wcfp/parsers/email_gmail.py`)
-- EDAS / EasyChair / OpenReview parsers
-- Kubernetes migration (spec in `arch.md §5`)
-- Health check endpoint (FastAPI)
-- Predatory publisher blocklist
-- Prometheus + Grafana observability
-- lesson_plan.md Modules 14–21 (async, BS4, HTTP, testing, Docker, git, scraping ethics)
-
 ---
 
 ## Key Constraints (never violate)

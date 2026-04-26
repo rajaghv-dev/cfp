@@ -19,7 +19,7 @@ Fully automated pipeline that:
 4. Classifies every conference into one or more categories (multi-label).
 5. Generates organised Markdown reports per category and region (India broken down state-wise).
 6. Refreshes on a cron so past conferences age out of the upcoming section.
-7. Builds an OWL ontology from the scraped category tags as a side product.
+7. **[v2]** Builds an OWL ontology from the scraped category tags as a side product.
 
 ---
 
@@ -184,7 +184,7 @@ SELECT * FROM cypher('wcfp_graph', $$ <cypher here> $$) AS (col agtype);
 | Country | iso2, name, region |
 | Concept | name (PascalCase), description, depth (0=root, 1=ResearchField, 2=AI ...) |
 | RawTag | text (original WikiCFP lowercase category tag) |
-| Workshop | event_id, acronym, name |
+| Workshop | (v2 only — dropped in v1; use is_workshop flag on Conference node instead) |
 
 ### Edge types
 
@@ -192,7 +192,7 @@ SELECT * FROM cypher('wcfp_graph', $$ <cypher here> $$) AS (col agtype);
 (Conference)       -[:IS_EDITION_OF]->                 (ConferenceSeries)
 (Conference)       -[:HELD_AT]->                        (Venue)
 (Conference)       -[:CLASSIFIED_AS {conf, tier}]->     (Concept)
-(Conference)       -[:CO_LOCATED_WITH]->                (Workshop)
+(Conference)       -[:CO_LOCATED_WITH]->                (Conference {is_workshop:true})  # parent conference to workshop — v1 uses is_workshop flag
 (ConferenceSeries) -[:PRECEDED_BY]->                    (ConferenceSeries)
 (Person)           -[:CHAIRS {role}]->                  (Conference)
 (Person)           -[:DELIVERS_KEYNOTE_AT]->            (Conference)
@@ -338,18 +338,18 @@ data already in the database (dedup comparison, ontology validation).
 
 ```
 wiki-cfp/
-├── config.py            PG_DSN, REDIS_URL, OLLAMA_HOSTS, MODEL_HOST,
-│                        TIER_THRESHOLD, EMBED_DIM, AGE_GRAPH, WCFP_MACHINE
+├── config.py            PG_DSN, REDIS_URL, OLLAMA_HOST, WCFP_MACHINE, PROFILE_MODELS,
+│                        TIER_THRESHOLD, EMBED_DIM, AGE_GRAPH
 ├── prompts.md           search queries + LLM prompt bodies (machine-read)
 ├── context.md           this file
-├── docker-compose.yml   PostgreSQL 16 + AGE + Redis (two containers)
+├── docker-compose.yml   PostgreSQL 16 + pgvector + Redis (v1; v2 swaps to apache/age)
 ├── requirements.txt
 ├── wcfp/
 │   ├── models.py        Event, Person, Organisation, Venue, Series,
 │   │                    ScrapeJob, TierResult, EscalationPayload, OntologyEdge
 │   ├── prompts_parser.py  parse_prompts_md(path) -> ParsedPrompts
 │   ├── db.py            PostgreSQL CRUD via psycopg3
-│   ├── graph.py         Apache AGE: sync nodes/edges, cypher_query helper
+│   ├── graph.py         (v2: Apache AGE) sync nodes/edges, cypher_query helper
 │   ├── analytics.py     DuckDB attached to PostgreSQL + export_parquet
 │   ├── queue.py         Redis: enqueue, dequeue, rate_limit, dead_letter
 │   ├── vectors.py       pgvector: upsert_embedding, search_similar
@@ -365,8 +365,8 @@ wiki-cfp/
 │   │   ├── client.py    OllamaClient: chat() + chat_with_tools() loop
 │   │   ├── tools.py     TOOLS list + closure-bound implementations
 │   │   ├── tier1..4.py
-│   ├── dedup.py         pgvector ANN + deepseek-r1:32b confirmation
-│   ├── ontology.py      AGE graph -> owlready2 -> .owl export for Protege
+│   ├── dedup.py         (v1: pgvector-only; v2 adds DeepSeek-R1) pgvector ANN + deepseek-r1:32b confirmation
+│   ├── ontology.py      (v2: AGE→owlready2→.owl) AGE graph -> owlready2 -> .owl export for Protege
 │   ├── pipeline.py      orchestrator
 │   └── cli.py           python -m wcfp <command>
 ├── generate_md.py       DuckDB analytics -> reports/*.md
@@ -445,7 +445,7 @@ TIER 3  qwen3:32b  RTX 4090  (tool calling for unknown sites)
         conf >= 0.80  →  PostgreSQL + AGE
         conf <  0.80  →  Redis wcfp:escalate:tier4
 
-TIER 4  deepseek-r1:70b  DGX  (overnight, no tool calling)
+TIER 4  deepseek-r1:70b  dgx/gpu_large profile  (overnight batch, no tool calling)
         Output: final Event + OntologyEdge[] + dedup:{same, reason}
         Always final.
 ```
@@ -455,6 +455,8 @@ After every write: `graph.py` syncs new/updated nodes and edges to AGE.
 ---
 
 ## 14. Ontology Pipeline
+
+> **v2 only.** v1 stores raw_tags only. Ontology pipeline runs after AGE migration.
 
 ```
 Tier 1  →  raw_tags extracted → stored as RawTag nodes in AGE
@@ -482,11 +484,13 @@ WCFP_MACHINE=gpu_large GCS_BUCKET=wcfp-data bash setup.sh
 setup.sh sequence: venv + pip → docker compose up → rclone pull pg_backup →
 pg_restore → ollama pull (profile-specific models) → verify connectivity.
 
-**requirements.txt**: `psycopg[binary]>=3.1 duckdb>=1.0 redis>=5.0 ollama>=0.3
-beautifulsoup4>=4.12 lxml>=5.0 requests>=2.32 tiktoken>=0.7 owlready2>=0.46 rdflib>=7.0
-pandas>=2.0 google-cloud-storage>=2.0`
+**requirements.txt**: `psycopg[binary]>=3.1 aiohttp>=3.9 redis>=5.0 ollama>=0.3
+beautifulsoup4>=4.12 lxml>=5.0 requests>=2.32 tiktoken>=0.7 python-dateutil>=2.9
+duckdb>=1.0 pandas>=2.0 typer>=0.12 rich>=13.0`
+v2 only: owlready2>=0.46 rdflib>=7.0
 
-**docker-compose.yml**: `apache/age:PG16_latest` (PostgreSQL 16 + AGE pre-installed)
+**docker-compose.yml**: `pgvector/pgvector:pg16` (PostgreSQL 16 + pgvector — v1).
+v2 switches to `apache/age:PG16_latest` when AGE is added.
 + `redis:7-alpine`. Two containers only. All state in named Docker volumes.
 `docker compose down -v` removes all local state — GCS is the backup.
 
@@ -499,9 +503,9 @@ pandas>=2.0 google-cloud-storage>=2.0`
 | `init-db`          | CREATE tables + extensions + AGE graph `wcfp_graph`            |
 | `enqueue-seeds`    | Parse prompts.md, push all search/index URLs to Redis           |
 | `run-pipeline`     | Long-running: dequeue → fetch → parse → tiers → PG + AGE      |
-| `tier4-batch`      | Drain wcfp:dead + escalations on DGX overnight                  |
-| `dedup-sweep`      | Recompute pgvector embeddings, run pairwise dedup               |
-| `build-ontology`   | Walk AGE graph → owlready2 → ontology/                         |
+| `tier4-batch`      | Drain wcfp:dead + escalations on DGX overnight (v2: requires deepseek-r1:70b on dgx/gpu_large) |
+| `dedup-sweep`      | Recompute pgvector embeddings, run pairwise dedup (v1: pgvector only; v2: adds DeepSeek-R1 confirmation) |
+| `build-ontology`   | Walk AGE graph → owlready2 → ontology/ (v2: requires Apache AGE) |
 | `generate-reports` | DuckDB analytics → reports/*.md                                 |
 | `sync-push`        | pg_dump + rclone push to cloud storage                          |
 | `sync-pull`        | rclone pull + pg_restore from cloud storage                     |
@@ -528,6 +532,8 @@ pandas>=2.0 google-cloud-storage>=2.0`
 | 2026-04-25 | 4-tier pipeline: 4b → 14b → 32b → 70b   | ~80% resolved by qwen3:4b; DGX only for the hard 1%          |
 | 2026-04-26 | Single-machine operation + GCS persistence | Any machine can run; GCS is the durable store; local state is always ephemeral |
 | 2026-04-26 | WCFP_MACHINE profile replaces per-host routing | One Ollama daemon on localhost; tiers skipped if model absent; jobs escalate |
+| 2026-04-26 | v1 ships without AGE, DuckDB, Tier 3+4, ontology | Faster path to real data; v2 adds these as an additive migration — arch.md §6 |
+| 2026-04-26 | v1 Docker image: pgvector/pgvector:pg16 (not apache/age) | AGE adds extension complexity; defer until ontology pipeline is needed |
 
 ---
 
@@ -656,8 +662,10 @@ profile in `PROFILE_MODELS` and add a weekly accuracy regression test.
 See `arch.md §1 Q14`.
 
 **Q15. Workshop entity modelling.** `Workshop` graph node vs `is_workshop`
-flag is ambiguous. Recommendation: drop the standalone Workshop label;
-workshops are events with `is_workshop=true` and optional `parent_event_id`.
+flag is ambiguous. **RESOLVED (2026-04-26).** Use `is_workshop: bool` flag on
+Event dataclass and `events.is_workshop` column. Standalone `Workshop` graph
+node label is dropped in v1. Can be reinstated in v2 if co-located workshop
+queries need separate node traversal.
 See `arch.md §1 Q15`.
 
 ---
