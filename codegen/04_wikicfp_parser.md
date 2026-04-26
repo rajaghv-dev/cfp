@@ -174,7 +174,7 @@ def parse_search_page(html: str) -> list[Event]:
             start_date   = start,
             end_date     = end,
             where_raw    = row["where"],
-            deadline     = paper_dl,
+            paper_deadline = paper_dl,
             abstract_deadline = abstract_dl,
             wikicfp_url  = row["url"],
             source       = "wikicfp",
@@ -195,7 +195,7 @@ def _extract_event_id(url: str) -> int:
 def parse_event_detail(html: str) -> dict:
     """
     Parse a WikiCFP event detail page.
-    Returns dict with: official_url, when, where, deadline, notification,
+    Returns dict with: official_url, when, where, paper_deadline, notification,
     camera_ready, raw_tags, description.
     """
     soup = BeautifulSoup(html, "lxml")
@@ -220,7 +220,7 @@ def parse_event_detail(html: str) -> dict:
                 kv[parts[i].strip()] = parts[i + 1].strip()
             result["when"]         = kv.get("When", "")
             result["where"]        = kv.get("Where", "")
-            result["deadline"]     = _safe_parse_date(kv.get("Submission Deadline"))
+            result["paper_deadline"] = _safe_parse_date(kv.get("Submission Deadline"))
             result["notification"] = _safe_parse_date(kv.get("Notification Due"))
             result["camera_ready"] = _safe_parse_date(kv.get("Final Version Due"))
             # Categories (raw tags)
@@ -304,7 +304,7 @@ def scrape_ai_deadlines() -> list[Event]:
             start_date   = start,
             end_date     = end,
             where_raw    = location,
-            deadline     = paper_dl,
+            paper_deadline = paper_dl,
             abstract_deadline = abstract_dl,
             official_url = url,
             source    = "ai_deadlines",

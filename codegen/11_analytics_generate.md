@@ -96,7 +96,7 @@ def load_all_events() -> list[dict]:
             end_date::VARCHAR AS end_date,
             where_raw,
             country, region, india_state,
-            deadline::VARCHAR AS deadline,
+            paper_deadline::VARCHAR AS paper_deadline,
             notification::VARCHAR AS notification,
             wikicfp_url, official_url,
             raw_tags, description, source
