@@ -17,7 +17,7 @@ type: reference
 | `SESSION.md` | Current state + priority to-do list — always most up-to-date |
 | `context.md` | Full architecture spec (20 sections) |
 | `arch.md` | Open questions (§1), risks (§2), ADRs (§3), suggestions (§4), K8s spec (§5), v1/v2 split (§6) |
-| `prompts.md` | All 12 LLM system prompts + data sources + parsers |
+| `prompts.md` | All 13 LLM system prompts + data sources + parsers |
 | `lesson_plan.md` | 35-module learning guide + A–Z glossary |
 | `evals.md` | Model research log — what fits 16 GB VRAM, eval-backed picks, FPGA/RTL specialists |
 | `.env.example` | All environment variables with defaults and comments |

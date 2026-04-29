@@ -24,13 +24,13 @@ Ollama models bind-mounted to `/mnt/d/wsl/ollama` (5.8 GB used, 248 GB free).
 | File | Lines | Notes |
 |---|---|---|
 | `CLAUDE.md` | 80 | Session instructions — auto-loaded by Claude Code |
-| `context.md` | 685 | 20-section spec — Q10/Q12/Q14/Q15 RESOLVED in §17 + §19 |
+| `context.md` | 689 | 20-section spec — Q10/Q12/Q14/Q15 RESOLVED in §17 + §19 |
 | `arch.md` | 1,485 | 15 questions (Q10/Q12/Q14/Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions · K8s spec |
-| `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
+| `prompts.md` | 1,008 | 13 LLM prompts + search queries + parsers + external sources |
 | `lesson_plan.md` | 1,659 | **35-module** curriculum + expanded A–Z glossary |
 | `evals.md` | 255 | Model research log: what runs on 16 GB VRAM, eval-backed list, FPGA/HLS specialists |
 | `requirements.txt` | 40 | Full v1 deps; v2-only commented out |
-| `README.md` | 181 | Current project README with architecture + quick start |
+| `README.md` | 187 | Current project README with architecture + quick start |
 | `SESSION.md` | — | Priority to-do list + current state |
 | `.env.example` | 35 | All env vars with defaults |
 | `docker-compose.yml` | — | postgres + redis + ollama with GPU + bind mount to D: drive |

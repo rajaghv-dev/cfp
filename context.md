@@ -165,7 +165,7 @@ Why not MongoDB: no graph traversal, no native vector search, weaker analytics.
 
 ## 5. Knowledge Graph Schema (Apache AGE)
 
-One graph: **wcfp_graph**. All Cypher runs via:
+One graph: **cfp_graph**. All Cypher runs via:
 
 ```sql
 SELECT * FROM cypher('cfp_graph', $$ <cypher here> $$) AS (col agtype);
@@ -314,6 +314,10 @@ DuckDB never writes to disk in this project — it is a calculation layer only.
 ---
 
 ## 9. Model Roster and Tool Calling
+
+> Model names below are abstract. **Actual pulled tags include pinned quantisation**
+> per profile — see `PROFILE_MODELS` in `codegen/01_config_models.md` (q4_K_M
+> default for non-DGX profiles, q8_0 on DGX). Resolution: `arch.md §1 Q14`.
 
 | Model              | Min VRAM | Profile      | Tool calling | Role                                     |
 |--------------------|----------|--------------|--------------|------------------------------------------|
@@ -500,7 +504,7 @@ v2 switches to `apache/age:PG16_latest` when AGE is added.
 
 | Command            | Action                                                          |
 |--------------------|-----------------------------------------------------------------|
-| `init-db`          | CREATE tables + extensions + AGE graph `wcfp_graph`            |
+| `init-db`          | CREATE tables + extensions + AGE graph `cfp_graph`             |
 | `enqueue-seeds`    | Parse prompts.md, push all search/index URLs to Redis           |
 | `run-pipeline`     | Long-running: dequeue → fetch → parse → tiers → PG + AGE      |
 | `tier4-batch`      | Drain cfp:dead + escalations on DGX overnight (v2: requires deepseek-r1:70b on dgx/gpu_large) |

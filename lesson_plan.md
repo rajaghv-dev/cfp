@@ -816,7 +816,7 @@ Industry standard for the Linux side of the world.
 ```
 cfp_scrape_pages_total{source="wikicfp",outcome="ok"} 4123
 cfp_scrape_pages_total{source="wikicfp",outcome="failed"} 12
-wcfp_tier_records_total{tier="1",outcome="escalated"} 219
+cfp_tier_records_total{tier="1",outcome="escalated"} 219
 ```
 Each line is a counter or gauge with labels. You query
 `rate(cfp_scrape_pages_total[5m])` to get pages-per-second over the last
@@ -829,13 +829,13 @@ sections (`arch.md S8`): throughput, quality, cost, errors.
 
 ### Which metrics matter for this pipeline
 In priority order:
-1. `wcfp_queue_depth` — is the pipeline alive?
-2. `wcfp_tier_records_total{outcome="escalated"}` — how often are we
+1. `cfp_queue_depth` — is the pipeline alive?
+2. `cfp_tier_records_total{outcome="escalated"}` — how often are we
    pushing work to expensive tiers?
-3. `wcfp_dedup_decisions_total` — how often do we find duplicates? (low
+3. `cfp_dedup_decisions_total` — how often do we find duplicates? (low
    numbers may mean dedup is missing them)
-4. `wcfp_embedding_seconds` — embedding latency = bottleneck signal
-5. `wcfp_llm_parse_failures_total` — JSON-mode failures by model
+4. `cfp_embedding_seconds` — embedding latency = bottleneck signal
+5. `cfp_llm_parse_failures_total` — JSON-mode failures by model
 
 See the full list in `arch.md S8`.
 

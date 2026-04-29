@@ -963,15 +963,15 @@ bottleneck.
 ```
 cfp_scrape_pages_total{source,outcome}      counter
 cfp_scrape_bytes_total{domain}              counter
-wcfp_tier_records_total{tier,outcome}        counter (outcome: ok|escalated|failed)
-wcfp_tier_latency_seconds{tier}              histogram
-wcfp_queue_depth{queue}                      gauge (per queue: main, dead, esc:tier2..4)
-wcfp_dedup_decisions_total{outcome}          counter (outcome: same|different|uncertain)
-wcfp_embedding_seconds                       histogram
-wcfp_llm_parse_failures_total{model,tier}    counter
-wcfp_pg_dump_bytes                           gauge
-wcfp_age_sync_failures_total                 counter
-wcfp_run_duration_seconds                    histogram (whole pipeline)
+cfp_tier_records_total{tier,outcome}        counter (outcome: ok|escalated|failed)
+cfp_tier_latency_seconds{tier}              histogram
+cfp_queue_depth{queue}                      gauge (per queue: main, dead, esc:tier2..4)
+cfp_dedup_decisions_total{outcome}          counter (outcome: same|different|uncertain)
+cfp_embedding_seconds                       histogram
+cfp_llm_parse_failures_total{model,tier}    counter
+cfp_pg_dump_bytes                           gauge
+cfp_age_sync_failures_total                 counter
+cfp_run_duration_seconds                    histogram (whole pipeline)
 ```
 
 **Dashboard sections.** (1) Throughput: pages/min, records/min by tier.

@@ -84,6 +84,10 @@ Full spec in `context.md §3`. Open architectural questions in `arch.md §1`.
 
 ## LLM pipeline
 
+> Model names below are abstract; **actual pulled tags include pinned quantisation**
+> per profile (q4_K_M default, q8_0 on DGX) — see `PROFILE_MODELS` in
+> `codegen/01_config_models.md`. Resolution: `arch.md §1 Q14`.
+
 | Tier | Model               | Confidence gate | Role                                         |
 |------|---------------------|-----------------|----------------------------------------------|
 | 1    | `qwen3:4b`          | ≥ 0.85          | Triage: is_cfp + categories + is_virtual     |
@@ -142,9 +146,11 @@ automatically on every run.
 |-------------------------|------------------------------------------------------------------------------|
 | `CLAUDE.md`             | Standing instructions for Claude Code (auto-loaded)                          |
 | `context.md`            | 20-section architecture spec — source of truth for code generation           |
-| `arch.md`               | Deep analysis — 15 open questions, 18 risks, 8 ADRs, 12 suggestions, K8s spec |
-| `prompts.md`            | All 12 LLM system prompts + search queries + parser registry                 |
-| `lesson_plan.md`        | 14-module learning curriculum + A–Z glossary                                 |
+| `arch.md`               | Deep analysis — 15 questions (4 RESOLVED), 18 risks, 8 ADRs, 15 suggestions, K8s spec |
+| `prompts.md`            | All 13 LLM system prompts + search queries + parser registry                 |
+| `lesson_plan.md`        | 35-module learning curriculum + A–Z glossary                                 |
+| `evals.md`              | Model research log — what runs on 16 GB VRAM, eval-backed picks               |
+| `docker-compose.yml`    | postgres+pgvector, redis+AOF, ollama+GPU+bind-mount                          |
 | `codegen/`              | One Markdown spec per module — read before implementing                      |
 | `memory/`               | Session memory files (travel with the repo; mirror to `~/.claude/`)          |
 | `SESSION.md`            | Current session state — read at the start of every session                   |

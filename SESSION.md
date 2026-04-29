@@ -75,13 +75,13 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | File | Lines | Notes |
 |---|---|---|
 | `CLAUDE.md` | 80 | Standing session instructions — auto-loaded by Claude Code |
-| `context.md` | 685 | 20-section architecture spec — v1/v2 annotations, Q10/Q12/Q14/Q15 resolved |
+| `context.md` | 689 | 20-section architecture spec — v1/v2 annotations, Q10/Q12/Q14/Q15 resolved |
 | `arch.md` | 1,485 | 15 questions (Q10/Q12/Q14/Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions |
-| `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
+| `prompts.md` | 1,008 | 13 LLM prompts + search queries + parsers + external sources |
 | `lesson_plan.md` | 1,659 | 35-module learning curriculum + expanded A–Z glossary |
 | `evals.md` | 255 | Model research log — what runs on 16 GB VRAM, eval-backed recommendations |
 | `requirements.txt` | 40 | Full v1 deps grouped by purpose; v2-only deps commented out |
-| `README.md` | 181 | Current project README with architecture + quick start |
+| `README.md` | 187 | Current project README with architecture + quick start |
 | `.env.example` | 35 | All env vars with defaults and comments |
 | `docker-compose.yml` | — | postgres+pgvector, redis+AOF, ollama+GPU+bind-mount |
 | `scripts/setup_postgres.sh` | — | Native PG16+pgvector install for WSL2 (fallback to Docker) |
