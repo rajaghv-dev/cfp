@@ -393,8 +393,8 @@ def test_sweep_finds_known_duplicate(clean_db, session_id):
     # Exactly one of {a, b} should now be superseded; c untouched.
     with clean_db.cursor() as cur:
         cur.execute(
-            "SELECT event_id, superseded_by FROM events WHERE event_id IN %s",
-            ((a, b, c),),
+            "SELECT event_id, superseded_by FROM events WHERE event_id = ANY(%s)",
+            ([a, b, c],),
         )
         rows = {r["event_id"]: r["superseded_by"] for r in cur.fetchall()}
     superseded = [eid for eid, sup in rows.items() if sup is not None]
