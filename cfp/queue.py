@@ -377,3 +377,62 @@ def rate_limit_acquire(domain: str, *, crawl_delay_s: int) -> bool:
         nx=True,
     )
     return bool(won)
+
+
+# ---------------------------------------------------------------------------
+# Tier-orchestrator helpers (codegen/10)
+#
+# The tier handlers in cfp/llm/tier{1,2}.py need to push payloads (not URLs)
+# onto cfp:queue:tier2 / cfp:escalate:tier{N} carrying the already-fetched
+# html text + event_id. Use RPUSH lists (FIFO, no dedup): the URL-keyed dedup
+# set on enqueue_url() does not apply once we already have an event_id.
+
+def _serialise_payload(d: dict) -> str:
+    return json.dumps(d, separators=(",", ":"), sort_keys=True, default=str)
+
+
+async def push_tier2(*, event_id: int, text: str, source_url: str) -> None:
+    """Hand off a Tier-1-classified event to the Tier-2 worker queue."""
+    payload = _serialise_payload(
+        {
+            "event_id": int(event_id),
+            "text": text,
+            "source_url": source_url,
+            "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    get_redis().rpush(QUEUE_KEY_FMT.format(tier=2), payload)
+
+
+async def push_escalation(
+    *,
+    target_tier: int,
+    event_id: Optional[int],
+    reason: str,
+    text: str,
+    source_url: Optional[str] = None,
+) -> None:
+    """Push to cfp:escalate:tier{N}. Tier 4 escalations land on cfp:dead in v1
+    (no Tier 4 worker yet)."""
+    payload = _serialise_payload(
+        {
+            "event_id": event_id,
+            "reason": reason,
+            "text": text,
+            "source_url": source_url,
+            "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    r = get_redis()
+    if target_tier == 4:
+        # v1: no tier-4 worker — write-through to dead-letter for batched human
+        # / DeepSeek-R1 review.
+        r.rpush(DEAD_KEY, payload)
+        return
+    r.rpush(ESCALATE_KEY_FMT.format(tier=target_tier), payload)
+
+
+async def incr_metric(key: str, *, by: int = 1) -> int:
+    """Bump a counter (e.g. cfp:metrics:parse_fail:<model>). Returns the new
+    value. Used by the JSON-repair retry loop in cfp/llm."""
+    return int(get_redis().incrby(key, by))

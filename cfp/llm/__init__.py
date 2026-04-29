@@ -40,12 +40,19 @@ class TierEscalation(Exception):
 
 ESCALATE_REASONS: frozenset[str] = frozenset({
     "low_confidence",       # tier returned conf < TIER_THRESHOLD
-    "json_parse_failed",    # JSON repair exhausted
+    "json_parse_fail",      # JSON repair exhausted (codegen/10 spec name)
+    "json_parse_failed",    # legacy alias
     "tool_loop_exhausted",  # chat_with_tools hit max_iters
     "model_unavailable",    # required model not in profile_intersection()
     "long_context",         # input exceeds tier's context window
     "ambiguous",            # tier flagged result as ambiguous
     "extraction_failed",    # tools returned no usable signal
+    "multi_category",       # tier 2 unable to disambiguate categories
+    "unknown_site",         # external site without a parser
+    "dedup_ambiguous",      # cosine in grey zone, needs LLM/human
+    "dedup_collapsed",      # already merged into another event
+    "ontology_edge",        # tier 4 to draw a new ontology edge
+    "quality_block",        # PROMPT_QUALITY_GUARD severity == "block"
 })
 
 
