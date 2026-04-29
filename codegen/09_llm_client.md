@@ -1,13 +1,13 @@
-# Codegen 09 — wcfp/llm/client.py + tools.py
+# Codegen 09 — cfp/llm/client.py + tools.py
 
 ## Files to Create
-- `wcfp/llm/__init__.py` (empty)
-- `wcfp/llm/client.py`
-- `wcfp/llm/tools.py`
+- `cfp/llm/__init__.py` (empty)
+- `cfp/llm/client.py`
+- `cfp/llm/tools.py`
 
 ## Imports
 ```python
-from config import OLLAMA_HOST, PROFILE_MODELS, WCFP_MACHINE, LONG_CONTEXT_TOKENS
+from config import OLLAMA_HOST, PROFILE_MODELS, CFP_MACHINE, LONG_CONTEXT_TOKENS
 ```
 
 There is **one** Ollama daemon per machine (`OLLAMA_HOST`). The legacy
@@ -95,9 +95,9 @@ def resolve_model(model: str | None) -> str:
 ## Available-model probe (replaces _detect_default_host)
 
 The pipeline uses this at startup to decide which tiers to run locally and
-which to escalate to `wcfp:escalate:tier4`. The set must be the intersection
+which to escalate to `cfp:escalate:tier4`. The set must be the intersection
 of (a) models actually pulled into the local Ollama daemon and (b) the
-profile roster from `PROFILE_MODELS[WCFP_MACHINE]`.
+profile roster from `PROFILE_MODELS[CFP_MACHINE]`.
 
 ```python
 import subprocess
@@ -135,11 +135,11 @@ def get_available_models() -> list[str]:
 
 def profile_intersection() -> list[str]:
     """
-    Return models that are BOTH (a) in the current WCFP_MACHINE profile and
+    Return models that are BOTH (a) in the current CFP_MACHINE profile and
     (b) actually pulled on the local Ollama daemon. Tiers requiring any
-    other model must be skipped and their jobs pushed to wcfp:escalate:tier4.
+    other model must be skipped and their jobs pushed to cfp:escalate:tier4.
     """
-    needed = set(PROFILE_MODELS.get(WCFP_MACHINE, []))
+    needed = set(PROFILE_MODELS.get(CFP_MACHINE, []))
     have   = set(get_available_models())
     return sorted(needed & have)
 ```
@@ -311,7 +311,7 @@ Each tool receives a `soup: BeautifulSoup` via closure when pipeline.py calls
 ```python
 import re
 from bs4 import BeautifulSoup
-from wcfp.llm.tools import TOOLS
+from cfp.llm.tools import TOOLS
 
 def make_tool_impls(soup: BeautifulSoup, current_url: str) -> dict[str, callable]:
     def extract_text(selector: str) -> str:
@@ -339,7 +339,7 @@ def make_tool_impls(soup: BeautifulSoup, current_url: str) -> dict[str, callable
 
     def classify_category(text: str) -> list[str]:
         # Lightweight keyword check; LLM will confirm
-        from wcfp.parsers.wikicfp import _guess_category
+        from cfp.parsers.wikicfp import _guess_category
         return [_guess_category(text)]
 
     def detect_virtual(text: str) -> bool:

@@ -8,7 +8,7 @@ type: project
 - **Single machine operation** — any machine with Docker + Ollama runs the pipeline
 - Machine lifecycle: **pull from GCS → restore → run → sync to GCS → full local wipe**
 - All persistent data lives in GCS (pg_dump + Parquet). Local state is always ephemeral.
-- `WCFP_MACHINE` profile: `dgx | gpu_large | gpu_mid | gpu_small | cpu_only`
+- `CFP_MACHINE` profile: `dgx | gpu_large | gpu_mid | gpu_small | cpu_only`
 - Single local Ollama daemon at `OLLAMA_HOST=http://localhost:11434` (no per-machine routing)
 - `PROFILE_MODELS` dict in config.py controls which models are pulled per profile
 
@@ -65,7 +65,7 @@ type: project
 3. DuckDB never writes to disk in this project
 4. Redis stores zero business data
 5. Tool calling: Qwen3 ONLY
-6. WikiCFP paired-row parser in `scraper.py` is correct — copy verbatim to `wcfp/parsers/wikicfp.py`
+6. WikiCFP paired-row parser in `scraper.py` is correct — copy verbatim to `cfp/parsers/wikicfp.py`
 7. India location taxonomy in `generate_md.py` is correct — copy verbatim
 8. COALESCE upsert: never overwrite `notification`, `camera_ready`, `rank`, `notes`, `official_url`, `submission_system` with NULL
 9. Crawl: min 5s delay, Gaussian(8s, σ=2.5), 10% chance 15–45s long pause

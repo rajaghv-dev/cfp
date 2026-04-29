@@ -29,7 +29,7 @@ Every decision → row in `context.md §17`. Resolved arch question → mark RES
 **Why:** Future sessions must not re-debate settled questions.
 
 ## Do not implement before arch questions are resolved
-Before any code in `wcfp/`, verify the relevant `arch.md §1` question is marked RESOLVED.
+Before any code in `cfp/`, verify the relevant `arch.md §1` question is marked RESOLVED.
 **Why:** User restructured the todo list explicitly: "before codegen, need to understand n fix arch."
 
 ## Update SESSION.md and memory/ at end of every session

@@ -1,19 +1,19 @@
-# Codegen 04 — wcfp/parsers/
+# Codegen 04 — cfp/parsers/
 
 ## Files to Create
-- `wcfp/parsers/__init__.py`
-- `wcfp/parsers/wikicfp.py`        (primary — full implementation)
-- `wcfp/parsers/ai_deadlines.py`   (full implementation)
-- `wcfp/parsers/ieee.py`           (stub)
-- `wcfp/parsers/acm.py`            (stub)
-- `wcfp/parsers/springer.py`       (stub)
-- `wcfp/parsers/usenix.py`         (stub)
-- `wcfp/parsers/conferencelist.py` (stub)
-- `wcfp/parsers/guide2research.py` (stub)
+- `cfp/parsers/__init__.py`
+- `cfp/parsers/wikicfp.py`        (primary — full implementation)
+- `cfp/parsers/ai_deadlines.py`   (full implementation)
+- `cfp/parsers/ieee.py`           (stub)
+- `cfp/parsers/acm.py`            (stub)
+- `cfp/parsers/springer.py`       (stub)
+- `cfp/parsers/usenix.py`         (stub)
+- `cfp/parsers/conferencelist.py` (stub)
+- `cfp/parsers/guide2research.py` (stub)
 
 ## Imports needed
 ```python
-from wcfp.models import Event, Category
+from cfp.models import Event, Category
 from config import USER_AGENT, HUMAN_DELAY_MIN, HUMAN_DELAY_MAX
 ```
 
@@ -176,7 +176,7 @@ def parse_search_page(html: str) -> list[Event]:
             where_raw    = row["where"],
             paper_deadline = paper_dl,
             abstract_deadline = abstract_dl,
-            wikicfp_url  = row["url"],
+            origin_url  = row["url"],
             source       = "wikicfp",
         ))
     return events
@@ -321,7 +321,7 @@ def scrape_ai_deadlines() -> list[Event]:
 
 ```python
 from urllib.parse import urlparse
-from wcfp.parsers import wikicfp as _wikicfp
+from cfp.parsers import wikicfp as _wikicfp
 
 # Base registry — extended at startup from PARSER: lines in prompts.md
 KNOWN_PARSERS: dict[str, callable] = {
@@ -345,7 +345,7 @@ def register(domain: str, fn: callable) -> None:
 
 ```python
 """Parser for <domain> conference pages. Stub — implement per-site."""
-from wcfp.models import Event
+from cfp.models import Event
 
 def parse(html: str) -> dict:
     """Extract conference fields from an <domain> page.

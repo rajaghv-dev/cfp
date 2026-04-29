@@ -1,9 +1,9 @@
-# Codegen 01 — config.py + wcfp/models.py
+# Codegen 01 — config.py + cfp/models.py
 
 ## Files to Create
 - `config.py` (repo root)
-- `wcfp/__init__.py` (empty)
-- `wcfp/models.py`
+- `cfp/__init__.py` (empty)
+- `cfp/models.py`
 
 ## Rule
 These two files import NOTHING project-internal. Every other file imports them.
@@ -22,19 +22,19 @@ REPORTS_DIR  = ROOT / "reports"
 ONTOLOGY_DIR = ROOT / "ontology"
 
 # PostgreSQL (primary store — all writes go here)
-PG_DSN = os.getenv("PG_DSN", "postgresql://wcfp:wcfp@localhost:5432/wikicfp")
+PG_DSN = os.getenv("PG_DSN", "postgresql://cfp:cfp@localhost:5432/cfp")
 
 # Redis (queue + rate limiting ONLY — zero business data)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # Ollama — single local daemon per machine (no per-model host routing).
-# Models that the current WCFP_MACHINE profile does not include are skipped
-# and their jobs land in wcfp:escalate:tier4 for the next capable machine.
+# Models that the current CFP_MACHINE profile does not include are skipped
+# and their jobs land in cfp:escalate:tier4 for the next capable machine.
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 # Machine profile — controls which models are pulled and which tiers run locally.
 # See context.md §2 for the full hardware matrix.
-WCFP_MACHINE = os.getenv("WCFP_MACHINE", "gpu_mid")
+CFP_MACHINE = os.getenv("CFP_MACHINE", "gpu_mid")
 # valid: dgx | gpu_large | gpu_mid | gpu_small | cpu_only
 
 # Per-profile model roster. The pipeline pulls and uses ONLY these models on
@@ -42,13 +42,13 @@ WCFP_MACHINE = os.getenv("WCFP_MACHINE", "gpu_mid")
 # and skip tiers whose model is absent. Quantisation is pinned per profile to
 # avoid Ollama silently picking Q4 on small VRAM (see arch.md §1 Q14).
 PROFILE_MODELS: dict[str, list[str]] = {
-    "dgx":       ["qwen3:4b", "qwen3:14b", "qwen3:32b",
-                  "deepseek-r1:32b", "deepseek-r1:70b", "nomic-embed-text"],
-    "gpu_large": ["qwen3:4b", "qwen3:14b", "qwen3:32b",
-                  "deepseek-r1:32b", "nomic-embed-text"],
-    "gpu_mid":   ["qwen3:4b", "qwen3:14b", "nomic-embed-text"],
-    "gpu_small": ["qwen3:4b", "nomic-embed-text"],
-    "cpu_only":  ["qwen3:4b", "nomic-embed-text"],
+    "dgx":       ["qwen3:4b-q8_0",   "qwen3:14b-q8_0",   "qwen3:32b-q8_0",
+                  "deepseek-r1:32b",  "deepseek-r1:70b",  "nomic-embed-text"],
+    "gpu_large": ["qwen3:4b-q4_K_M", "qwen3:14b-q4_K_M", "qwen3:32b-q4_K_M",
+                  "deepseek-r1:32b",  "nomic-embed-text"],
+    "gpu_mid":   ["qwen3:4b-q4_K_M", "qwen3:14b-q4_K_M", "nomic-embed-text"],
+    "gpu_small": ["qwen3:4b-q4_K_M", "nomic-embed-text"],
+    "cpu_only":  ["qwen3:4b-q4_K_M", "nomic-embed-text"],
 }
 
 # Tier thresholds — escalate if confidence < threshold
@@ -58,7 +58,7 @@ TIER_THRESHOLD = {1: 0.85, 2: 0.85, 3: 0.80}
 LONG_CONTEXT_TOKENS = 32_000   # measured with tiktoken cl100k_base
 
 # Graph (Apache AGE — v2; v1 uses relational tables only — see arch.md §6)
-AGE_GRAPH = "wcfp_graph"
+AGE_GRAPH = "cfp_graph"
 
 # Embeddings
 EMBED_DIM         = 768          # nomic-embed-text output dimension
@@ -79,10 +79,16 @@ HUMAN_DELAY_LONG_PROB = 0.10  # 10% chance of 15–45 s "reading" pause
 MAX_RETRIES        = 5
 RETRY_BACKOFF_BASE = 2.0      # delay = BASE**attempt + jitter(0..1)
 RETRY_BACKOFF_CAP  = 600      # cap at 10 min
-DEAD_LETTER_KEY    = "wcfp:dead"
+DEAD_LETTER_KEY    = "cfp:dead"
+
+# LLM JSON failure recovery (arch.md §1 Q12 — RESOLVED 2026-04-29)
+# Strategy: local repair → 1 same-tier retry → escalate one tier
+JSON_REPAIR_ENABLED   = True   # attempt json5/regex repair before retry
+JSON_RETRY_SAME_TIER  = 1      # retries at same tier with reminder preamble
+PARSE_FAIL_THRESHOLD  = 0.01   # flag model for review if parse-fail rate > 1%
 
 # GCS / rclone settings — off-machine persistence (see context.md §18)
-GCS_BUCKET    = os.getenv("GCS_BUCKET", "wcfp-data")
+GCS_BUCKET    = os.getenv("GCS_BUCKET", "cfp-data")
 GCS_PREFIX    = os.getenv("GCS_PREFIX", "prod")
 RCLONE_REMOTE = os.getenv("RCLONE_REMOTE", "gcs")     # name of the rclone remote
 
@@ -93,7 +99,7 @@ SEED_JSON     = DATA_DIR / "latest.json"   # 350-conf seed; imported once into P
 
 ---
 
-## wcfp/models.py — implement exactly as shown
+## cfp/models.py — implement exactly as shown
 
 ### Enums
 
@@ -199,7 +205,7 @@ class Event:
     # e.g. ["IEEE", "ACM SIGCHI", "Springer LNCS"]
 
     # URLs
-    wikicfp_url:  Optional[str]  = None
+    origin_url:  Optional[str]  = None
     official_url: Optional[str]  = None
     source:       str            = "wikicfp"  # wikicfp|ai_deadlines|conferencelist|manual
 
@@ -248,7 +254,7 @@ class Event:
             f"**Year:** {self.edition_year or 'TBD'}  ",
             f"**Rank:** {self.rank or 'N/A'}  ",
             f"**Source:** {self.source}  ",
-            f"**URL:** {self.official_url or self.wikicfp_url or ''}  ", "",
+            f"**URL:** {self.official_url or self.origin_url or ''}  ", "",
             "## Description", "",
             self.description or "_No description available._", "",
             "## Deadlines", "",
@@ -281,7 +287,7 @@ class Event:
 Person:       person_id(int), full_name(str), email, dblp_url, homepage
 Organisation: org_id(int), name(str), type(OrgType), country, website
 Venue:        venue_id(int), name, city, state, country, latitude, longitude
-Series:       series_id(int), acronym(str), full_name, wikicfp_url, org_id
+Series:       series_id(int), acronym(str), full_name, origin_url, org_id
 ScrapeJob:    url(str), domain(str), priority(int), source_event_id,
               attempts(int=0), status(JobStatus=PENDING), added_at, last_error
 TierResult:   tier(Tier), model(str), confidence(float), output(dict),

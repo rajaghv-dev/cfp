@@ -33,12 +33,12 @@ one or more source files. They are ordered by dependency: implement in numeric o
 
 ## Key Constraints for All Generated Code
 
-- `wcfp/models.py` and `config.py` MUST import nothing project-internal
+- `cfp/models.py` and `config.py` MUST import nothing project-internal
 - All writes to PostgreSQL use `psycopg` (psycopg3), NOT psycopg2
 - DuckDB is NEVER used for writes; it only reads PostgreSQL via postgres_scanner
 - Redis stores ZERO business data
 - Tool calling: Qwen3 models ONLY. DeepSeek-R1 has no tool calling
-- Import style: `from wcfp.models import Event, Category` (absolute imports)
+- Import style: `from cfp.models import Event, Category` (absolute imports)
 - All dates: `datetime.date`. All timestamps: `datetime.datetime` UTC-aware
 - All dataclasses use `@dataclass(slots=True)`
 

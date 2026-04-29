@@ -3,11 +3,11 @@
 # Usage:
 #   bash setup.sh                        # set up current directory
 #   bash setup.sh <repo-url>             # clone from URL first, then set up
-#   WCFP_MACHINE=rtx4090 bash setup.sh   # set machine role (rtx3080|rtx4090|dgx|local)
+#   CFP_MACHINE=rtx4090 bash setup.sh   # set machine role (rtx3080|rtx4090|dgx|local)
 set -euo pipefail
 
 REPO_URL="${1:-}"
-WCFP_MACHINE="${WCFP_MACHINE:-local}"
+CFP_MACHINE="${CFP_MACHINE:-local}"
 PYTHON="${PYTHON:-python3}"
 VENV=".venv"
 
@@ -24,7 +24,7 @@ if [ -n "$REPO_URL" ]; then
     cd "$REPO_DIR"
 fi
 
-echo "=== CFP Setup (machine: $WCFP_MACHINE) ==="
+echo "=== CFP Setup (machine: $CFP_MACHINE) ==="
 echo "Working directory: $(pwd)"
 
 # ── 2. Python check ────────────────────────────────────────────────────────
@@ -68,10 +68,10 @@ MACHINE_MODELS[rtx4090]="qwen3:32b deepseek-r1:32b"
 MACHINE_MODELS[dgx]="deepseek-r1:70b"
 MACHINE_MODELS[local]="qwen3:4b nomic-embed-text"
 
-MODELS_FOR_MACHINE="${MACHINE_MODELS[$WCFP_MACHINE]:-}"
+MODELS_FOR_MACHINE="${MACHINE_MODELS[$CFP_MACHINE]:-}"
 
 if [ -n "$MODELS_FOR_MACHINE" ] && command -v ollama &>/dev/null; then
-    echo "Checking Ollama models for $WCFP_MACHINE..."
+    echo "Checking Ollama models for $CFP_MACHINE..."
     for model in $MODELS_FOR_MACHINE; do
         if ollama list 2>/dev/null | grep -q "^${model}"; then
             echo "  ✓ $model already pulled"
@@ -81,7 +81,7 @@ if [ -n "$MODELS_FOR_MACHINE" ] && command -v ollama &>/dev/null; then
         fi
     done
 else
-    echo "  Ollama not found or WCFP_MACHINE=local — skipping model pull"
+    echo "  Ollama not found or CFP_MACHINE=local — skipping model pull"
     echo "  To pull models manually: ollama pull qwen3:4b"
 fi
 
@@ -107,7 +107,7 @@ fi
 if python3 -c "
 import psycopg, os, sys
 try:
-    dsn = os.getenv('PG_DSN', 'postgresql://wcfp:wcfp@localhost:5432/wikicfp')
+    dsn = os.getenv('PG_DSN', 'postgresql://cfp:cfp@localhost:5432/cfp')
     psycopg.connect(dsn, connect_timeout=3).close()
     sys.exit(0)
 except Exception as e:
@@ -123,14 +123,14 @@ fi
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 if [ -f README.md ]; then
     if grep -q "^Last setup:" README.md; then
-        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $WCFP_MACHINE)/" README.md
+        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $CFP_MACHINE)/" README.md
     else
-        printf '\nLast setup: %s (machine: %s)\n' "$TIMESTAMP" "$WCFP_MACHINE" >> README.md
+        printf '\nLast setup: %s (machine: %s)\n' "$TIMESTAMP" "$CFP_MACHINE" >> README.md
     fi
 fi
 if [ -f SESSION.md ]; then
     if grep -q "^Last setup:" SESSION.md; then
-        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $WCFP_MACHINE)/" SESSION.md
+        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $CFP_MACHINE)/" SESSION.md
     fi
 fi
 
@@ -143,10 +143,10 @@ echo ""
 echo "  # Quick scrape (existing implementation):"
 echo "  python3 scraper.py --pages 2"
 echo ""
-echo "  # Once wcfp/ package is implemented:"
+echo "  # Once cfp/ package is implemented:"
 echo "  docker compose up -d"
-echo "  python3 -m wcfp init-db"
-echo "  python3 -m wcfp enqueue-seeds"
-echo "  python3 -m wcfp run-pipeline"
+echo "  python3 -m cfp init-db"
+echo "  python3 -m cfp enqueue-seeds"
+echo "  python3 -m cfp run-pipeline"
 echo ""
 echo "  See SESSION.md for full context and next steps."

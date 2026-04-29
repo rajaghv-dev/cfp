@@ -82,7 +82,7 @@ it later is expensive (orphaned graph edges, broken FKs from `event_people`).
    call to the hot path; on `gpu_mid` DeepSeek-R1:32b is unavailable, so you'd
    have to escalate every Tier 2 write to Tier 4 — pipeline stalls.
 2. **Asynchronous "dedup queue".** After write, push the new `event_id` to
-   `wcfp:dedup_pending`. A separate worker drains the queue, runs ANN + LLM,
+   `cfp:dedup_pending`. A separate worker drains the queue, runs ANN + LLM,
    and merges duplicates. Pros: hot path unaffected. Cons: there's a window
    where duplicates exist; AGE sync may fire on the duplicate first.
 3. **Nightly batch via `dedup-sweep`.** Recompute embeddings, scan all pairs above
@@ -92,7 +92,7 @@ it later is expensive (orphaned graph edges, broken FKs from `event_people`).
 **RECOMMENDED.** Hybrid. (a) On Tier 2/3 write, do a **cheap pgvector lookup
 only** — no LLM call. If the top neighbour exceeds **DEDUP_COSINE = 0.97**
 (higher than the dedup threshold), assume duplicate and skip the write entirely
-(idempotent insert). (b) For 0.92 ≤ cosine < 0.97, push to `wcfp:dedup_pending`
+(idempotent insert). (b) For 0.92 ≤ cosine < 0.97, push to `cfp:dedup_pending`
 for asynchronous LLM confirmation. (c) Run `dedup-sweep` nightly as a safety net
 across the whole table. This keeps the hot path one SQL query, defers LLM cost,
 and bounds duplicate-survival time.
@@ -175,7 +175,7 @@ in `graph.py` writes to **both** the relational table and AGE inside a single
 PG transaction (AGE is just a Postgres extension; Cypher inside `cypher()` is
 transactional with the surrounding SQL). If AGE sync fails: the transaction
 rolls back, the relational write does not happen, the job lands in
-`wcfp:dead`. This is automatic — no separate reconciliation job needed. Add
+`cfp:dead`. This is automatic — no separate reconciliation job needed. Add
 a periodic `graph verify` command that diffs the projection against AGE and
 alerts on mismatch.
 
@@ -184,20 +184,20 @@ alerts on mismatch.
 ## Q5. Dead-letter drain on small machines: who runs Tier 4?
 
 **Why it matters.** `context.md §2` says jobs whose required model is absent
-escalate to `wcfp:escalate:tier4`. If a user only ever runs `gpu_mid`, Tier 3
-and Tier 4 escalations accumulate forever. Eventually `wcfp:escalate:tier4`
+escalate to `cfp:escalate:tier4`. If a user only ever runs `gpu_mid`, Tier 3
+and Tier 4 escalations accumulate forever. Eventually `cfp:escalate:tier4`
 becomes the queue with the most items, and the user has no DGX to drain it.
 
 **Candidates.**
 
-1. **API fallback.** When `WCFP_MACHINE` lacks the required tier, call an
+1. **API fallback.** When `CFP_MACHINE` lacks the required tier, call an
    external API (Anthropic, OpenAI, OpenRouter, Together) for that one record.
    Pros: dead-letters always drain. Cons: violates the "fully self-hosted"
    stance implicit in `context.md §4`; introduces API key management; cost
    per call; data leakage to a third party. Mitigation: gate behind an env var
-   `WCFP_ALLOW_API_FALLBACK=true`.
+   `CFP_ALLOW_API_FALLBACK=true`.
 2. **Cloud GPU rental (Lambda Labs, RunPod, Vast.ai) on demand.** When
-   `wcfp:escalate:tier4` exceeds N items, spin up a temporary cloud GPU,
+   `cfp:escalate:tier4` exceeds N items, spin up a temporary cloud GPU,
    `setup.sh` on it, drain, sync, terminate. Pros: stays self-hosted; cost
    only when queue is full. Cons: complex; requires cloud provider credentials;
    spin-up time ~3 min.
@@ -266,7 +266,7 @@ domain. WikiCFP is one domain. Putting numbers to it:
   **12.6 hours** of pure delay, before fetch latency, parsing, or LLM time.
 
 That is a full overnight run for the first crawl. Subsequent runs only fetch
-new/changed pages (cursor in `wcfp:cursor:{source}`, seen-URL TTL of 30 days),
+new/changed pages (cursor in `cfp:cursor:{source}`, seen-URL TTL of 30 days),
 so steady state is much smaller — maybe 200 pages = 30 min.
 
 **Is per-domain rate limiting granular enough?** Yes for WikiCFP (one domain).
@@ -337,7 +337,7 @@ to confirm the index is being used.
 ## Q9. Kubernetes vs Docker Compose: stepping stone or terminus?
 
 **Why it matters.** Docker Compose is pinned in `context.md §15`. Nothing in
-the spec contemplates K8s. But the Redis inflight-lease design (`wcfp:inflight:
+the spec contemplates K8s. But the Redis inflight-lease design (`cfp:inflight:
 {job_id}` with TTL) is the textbook pattern for crash-safe horizontal worker
 scaling. If you ever want to scrape 50 sources in parallel, you need K8s. If
 you only ever want to scrape WikiCFP overnight on a laptop, you don't.
@@ -374,7 +374,7 @@ On Kubernetes (scale-to-zero), every job pays this cost.
 2. **Persistent Ollama volume (`/root/.ollama`).** Mounted across runs. Pros:
    one-time pull. Cons: in K8s a PVC is zonal; sharing across nodes needs a
    ReadWriteMany volume (Filestore on GCP, ~$60/month minimum for 1 TB).
-3. **Pre-baked Docker image with models embedded.** Build a `wcfp/runner-gpu_large`
+3. **Pre-baked Docker image with models embedded.** Build a `cfp/runner-gpu_large`
    image with all 51 GB of models in `/root/.ollama`. Image is pulled once per
    node, cached locally. Pros: no PVC, no shared filesystem. Cons: image is
    massive (~52 GB compressed → ~50 GB on disk per node); slow `docker pull`
@@ -384,9 +384,11 @@ On Kubernetes (scale-to-zero), every job pays this cost.
    per-node by the kubelet (one pull per node, persists across pods). Pros: fast
    on both. Cons: two artefact pipelines.
 
+**STATUS: RESOLVED 2026-04-29.** Implemented Option 4. Named volume `ollama_models:/root/.ollama` added to `docker-compose.yml` for local Compose. GKE pre-baked profile images deferred to v2.
+
 **RECOMMENDED.** Option 4. For local Docker Compose: declare a named volume
 `ollama-models:/root/.ollama`. The first run pulls; subsequent runs reuse. For
-GKE: build a per-profile Docker image (`wcfp/runner:gpu_large-2026.04`) with
+GKE: build a per-profile Docker image (`cfp/runner:gpu_large-2026.04`) with
 models pre-baked. Tag images by profile and date so node caches stay warm
 across job runs. Use GCR's regional artefact registry (network within zone is
 free). Trigger a re-bake when Ollama model versions update (rare).
@@ -396,9 +398,9 @@ free). Trigger a re-bake when Ollama model versions update (rare).
 ## Q11. Single point of contention: Redis as operational store
 
 **Why it matters.** `context.md §3` declares Redis "owns ZERO persistent business
-data". But `wcfp:cursor:{source}` is the resume cursor for the entire pipeline.
+data". But `cfp:cursor:{source}` is the resume cursor for the entire pipeline.
 If Redis loses that key, you re-scrape from page 1 of every WikiCFP search —
-expensive but recoverable. If Redis loses `wcfp:dead`, you silently drop failed
+expensive but recoverable. If Redis loses `cfp:dead`, you silently drop failed
 jobs and never know. The escalation queues are the same: stored only in Redis,
 zero durability.
 
@@ -407,7 +409,7 @@ zero durability.
 1. **Status quo, accept loss.** Redis crashes are rare; pipeline is idempotent.
 2. **Enable Redis AOF persistence.** Append-only file, fsync every second.
    Crash recovery loses ≤1 s of operations.
-3. **Mirror critical keys to PostgreSQL.** `wcfp:dead` and `wcfp:escalate:*` are
+3. **Mirror critical keys to PostgreSQL.** `cfp:dead` and `cfp:escalate:*` are
    regularly drained to a `pg.escalations` table; cursor is upserted to
    `pg.scrape_cursor` after each batch.
 
@@ -415,8 +417,8 @@ zero durability.
 the Compose `redis:7-alpine` (`redis-server --appendonly yes`). For the cursor
 specifically, persist to `sites.last_cursor` after every page batch (already
 schemaless-friendly because `sites` exists per `context.md §6`). Dead-letter
-items get a one-way drain to PG: Tier 4 reads from `wcfp:dead`, processes, and
-stores results in PG; a missed batch is recoverable from `wcfp:dead` history
+items get a one-way drain to PG: Tier 4 reads from `cfp:dead`, processes, and
+stores results in PG; a missed batch is recoverable from `cfp:dead` history
 because Tier 4 writes its own audit row.
 
 ---
@@ -440,10 +442,12 @@ does not specify retry budget or behaviour.
 4. **Retry one tier higher.** If Tier 1 emits invalid JSON, escalate to Tier 2.
    Pros: structured fallback. Cons: amplifies cost on a model bug.
 
+**STATUS: RESOLVED 2026-04-29.** Local JSON repair first → one same-tier retry with reminder preamble → escalate one tier on second failure. Constants added to `config.py`: `JSON_RETRY_SAME_TIER = 1`, `JSON_REPAIR_ENABLED = True`. Track `cfp:metrics:parse_fail:{model}`.
+
 **RECOMMENDED.** 2 first (cheap), then 4 (escalate on persistent failure). One
 retry only at the same tier with a "your previous output was not valid JSON,
 emit only valid JSON" preamble. After two same-tier failures: escalate. Track
-the parse-failure rate per model in `wcfp:metrics:parse_fail:{model}`. If it
+the parse-failure rate per model in `cfp:metrics:parse_fail:{model}`. If it
 exceeds 1%, flag for prompt review.
 
 ---
@@ -466,7 +470,7 @@ cost grows.
 
 **RECOMMENDED.** Option 2 in queries (cheap defensive measure), and Option 3 as
 an optimisation when the graph grows past 5k `Concept` nodes. Don't ship 3 on
-day one. Track Cypher query latency in `wcfp:metrics:cypher_p99` — if >500 ms,
+day one. Track Cypher query latency in `cfp:metrics:cypher_p99` — if >500 ms,
 materialise.
 
 ---
@@ -484,6 +488,8 @@ noticeably worse than Q8. The spec does not specify a quantisation policy.
    `gpu_mid` uses `qwen3:14b-q5_K_M`, `gpu_large` uses `qwen3:32b-q4_K_M` (still
    fits 24 GB), `dgx` uses `qwen3:32b-q8_0`.
 3. **Always use the highest quant that fits.** Determined at startup.
+
+**STATUS: RESOLVED 2026-04-29.** Pinned per-profile quant tags in `PROFILE_MODELS` in `codegen/01`. Accuracy regression test (10 known-good Tier 1 examples) documented in spec.
 
 **RECOMMENDED.** Option 2 — pin in `PROFILE_MODELS`. Add a quality regression
 test (10 known-good Tier 1 examples; measure JSON validity + field correctness)
@@ -528,7 +534,7 @@ Severity = Probability × Impact, mapped to {Low, Medium, High, Critical}.
 | R4 | GCS sync corruption: pg_dump uploaded mid-write or partially; restore on next session loses data | Operational | Low | Critical | **High** | Two-phase upload: write `pg_backup/staging.dump`, validate via `pg_restore --list`, then `gsutil mv` to `pg_backup/latest.dump` atomically. Keep N=7 versioned backups (`gs://bucket/pg_backup/2026-04-26.dump`). Versioning enabled on the bucket. Run `pg_restore --list` smoke test before every upload completes. |
 | R5 | GKE spot GPU node preempted mid-job; in-flight Tier 3/4 work lost | Operational | High | Medium | **High** | Redis inflight lease (TTL=600s) automatically returns the job to the queue. Idempotent writes via `INSERT ... ON CONFLICT`. Tier 4 batch checkpoints progress every 10 records to PG. Document: spot preemption is expected, not exceptional. Use 2× CPU on-demand pool for orchestrator, spot only for GPU workers. |
 | R6 | Ollama model quantisation degrades JSON validity on `gpu_small`/`cpu_only` | Data Quality | Medium | Medium | **Medium** | Pin quantisation per profile (Q14). Run weekly accuracy regression on a held-out set. If Tier 1 JSON-validity drops below 95%, upgrade default quant or escalate more aggressively to Tier 2. |
-| R7 | Dead-letter accumulation on `gpu_mid`-only deployments — Tier 4 never runs | Operational | High | Medium | **High** | Document the `tier4-cloud` escape hatch (spot GPU rental — Q5). Surface queue depth in health endpoint (Suggestion 2). Alert when `wcfp:escalate:tier4` exceeds 500 items. |
+| R7 | Dead-letter accumulation on `gpu_mid`-only deployments — Tier 4 never runs | Operational | High | Medium | **High** | Document the `tier4-cloud` escape hatch (spot GPU rental — Q5). Surface queue depth in health endpoint (Suggestion 2). Alert when `cfp:escalate:tier4` exceeds 500 items. |
 | R8 | AGE/PG drift: relational write succeeds, AGE sync fails, no detection | Data Quality | Low | High | **Medium** | Wrap both writes in a single PG transaction (AGE Cypher runs in PG, so this is naturally transactional — verify the Python adapter's autocommit settings). Add `graph verify` periodic check (Q4 ADR). |
 | R9 | Predatory or spam conferences pass Tier 1 triage and pollute reports | Data Quality | High | Medium | **High** | New `PROMPT_QUALITY_GUARD` prompt (added to `prompts.md`) gates writes on suspicious patterns. Domain blocklist (Suggestion 10). Warn-flag items for human review rather than silently writing. |
 | R10 | Cross-source duplicates pollute reports and confuse rank/category aggregation | Data Quality | High | Medium | **High** | Q2 + Q6: synchronous high-threshold ANN check, async LLM confirmation, nightly sweep. Track dedup precision/recall on a labelled set. |
@@ -762,7 +768,7 @@ machines) and not change vectors across runs.
 infrastructure is wasteful; weekly cron jobs running on a laptop are sufficient.
 Kubernetes from day one would be over-engineered.
 
-**Decision**: One machine at a time runs the pipeline. `WCFP_MACHINE` controls
+**Decision**: One machine at a time runs the pipeline. `CFP_MACHINE` controls
 which models load. State persists in GCS between sessions. No central
 coordinator.
 
@@ -823,7 +829,7 @@ engine. The code-level change is ~50 LOC.
 **What.** A small FastAPI app on port 8080 exposing `/health`, `/metrics`,
 `/queue`, `/runs`. Reads counters from Redis and rows from `pg.pipeline_runs`.
 
-**Why.** Currently you SSH to the machine and `redis-cli LLEN wcfp:queue` to
+**Why.** Currently you SSH to the machine and `redis-cli LLEN cfp:queue` to
 know if the pipeline is alive. That doesn't scale to "did the cron run last
 night?" Add Prometheus-format metrics for free.
 
@@ -837,7 +843,7 @@ GET /queue          {"queue_depth": int, "inflight": int, "dead": int,
 GET /runs?limit=10  recent pg.pipeline_runs rows
 ```
 
-**When.** MVP. Slot into `wcfp/cli.py serve --port 8080` so it doesn't add a
+**When.** MVP. Slot into `cfp/cli.py serve --port 8080` so it doesn't add a
 new container.
 
 ---
@@ -858,9 +864,9 @@ reason, severity, created_at, reviewed_by, decision, reviewed_at)`. Add CLI
 commands:
 
 ```
-python -m wcfp review list --reason predatory_publisher
-python -m wcfp review approve <event_id>
-python -m wcfp review reject  <event_id> --reason <text>
+python -m cfp review list --reason predatory_publisher
+python -m cfp review approve <event_id>
+python -m cfp review reject  <event_id> --reason <text>
 ```
 
 A simple web UI (Streamlit, ~100 LOC) reading from `pg.review_queue` is
@@ -916,7 +922,7 @@ At ~50k events with 768-d vectors and full HTML caches, expect ~5 GB. Above
 5. KEDA autoscaling for scrapers.
 6. CronJob for weekly pipeline run.
 
-**What can stay as-is.** All Python code. The `WCFP_MACHINE` env var
+**What can stay as-is.** All Python code. The `CFP_MACHINE` env var
 becomes a node selector + a runtime label. `setup.sh` becomes a Job init-
 container.
 
@@ -931,7 +937,7 @@ checkpoint progress before exit; resume on restart. ~100 LOC change in
 ## S7. KEDA autoscaling for scraper workers (Later)
 
 **What.** Kubernetes Event-Driven Autoscaler scales scraper pods based on
-`LLEN wcfp:queue`.
+`LLEN cfp:queue`.
 
 **Why.** Today: one scraper, sequential. With KEDA: 0 pods when queue empty,
 N pods when queue has N×100 items. Each pod takes a fair share of the queue
@@ -955,8 +961,8 @@ bottleneck.
 **Metrics that matter (in priority order).**
 
 ```
-wcfp_scrape_pages_total{source,outcome}      counter
-wcfp_scrape_bytes_total{domain}              counter
+cfp_scrape_pages_total{source,outcome}      counter
+cfp_scrape_bytes_total{domain}              counter
 wcfp_tier_records_total{tier,outcome}        counter (outcome: ok|escalated|failed)
 wcfp_tier_latency_seconds{tier}              histogram
 wcfp_queue_depth{queue}                      gauge (per queue: main, dead, esc:tier2..4)
@@ -991,7 +997,7 @@ when debugging prompt regressions.
 
 **Implementation.** Add `last_session_id INT NOT NULL DEFAULT 0` to every
 mutable table, foreign key to `scrape_sessions(session_id)`. Set a session-local
-GUC at run start: `SET LOCAL wcfp.session_id = 42;` and have a default value
+GUC at run start: `SET LOCAL cfp.session_id = 42;` and have a default value
 expression read from it. ~30 LOC change.
 
 **When.** MVP. Do this before the corpus grows past ~1k records — adding it
@@ -1008,7 +1014,7 @@ domains, checked **before** enqueue.
 its successors maintain ~1500 known-bad domains. A bloom-filter or set check
 before enqueue is O(1) and cuts pollution.
 
-**Implementation.** `wcfp/blocklist.py` with `is_predatory(domain) -> bool`.
+**Implementation.** `cfp/blocklist.py` with `is_predatory(domain) -> bool`.
 Source: a curated list shipped in-repo as `data/blocklist.txt`. Refresh
 quarterly from public sources (Cabells, retired Beall's snapshots). Combine
 with the new `PROMPT_QUALITY_GUARD` (which catches things the static list
@@ -1023,7 +1029,7 @@ misses).
 **What.** Every job pushed to Redis carries a stable `job_id = sha1(source_url
 + priority_bucket)`. Re-enqueueing the same URL is a no-op.
 
-**Why.** Today, `wcfp:seen:{sha1(url)}` is the dedup mechanism. It's TTL'd at
+**Why.** Today, `cfp:seen:{sha1(url)}` is the dedup mechanism. It's TTL'd at
 30 days. If a worker crashes mid-job and the inflight lease expires, the job
 is requeued — but the URL isn't in `seen` (because the original push was
 de-duped). A second worker grabs it. Fine. But if the same URL gets enqueued
@@ -1046,13 +1052,13 @@ acronym matches.
 **Why.** R11 — LLMs guess ranks based on prestige; CORE has the authoritative
 list. Single import, periodic refresh (yearly).
 
-**When.** MVP. Add `python -m wcfp import-core` CLI.
+**When.** MVP. Add `python -m cfp import-core` CLI.
 
 ---
 
 ## S13. Async HTTP in fetch.py (MVP for v1.1)
 
-**What.** Replace the synchronous `requests` calls in `wcfp/fetch.py` with
+**What.** Replace the synchronous `requests` calls in `cfp/fetch.py` with
 `aiohttp` + `asyncio`. The module already lives behind a `with_retry`
 decorator and a `human_delay` rate limiter — neither needs to change shape.
 
@@ -1096,8 +1102,8 @@ in newer versions). Embedding a 50k-record corpus drops from ~30 min to
 
 ## S15. `--workers N` flag for parallel pipeline workers (Later)
 
-**What.** Add `--workers N` to `python -m wcfp run-pipeline`. The Redis
-inflight-lease design (`wcfp:inflight:{job_id}` with 600 s TTL) already
+**What.** Add `--workers N` to `python -m cfp run-pipeline`. The Redis
+inflight-lease design (`cfp:inflight:{job_id}` with 600 s TTL) already
 supports N concurrent consumers — what's missing is the orchestrator that
 spawns N async tasks all dequeuing independently.
 
@@ -1130,7 +1136,7 @@ than overnight.
 This section sketches the GKE deployment that preserves the pull→run→wipe
 lifecycle in `context.md §18`. It is **not** the day-one architecture. It is
 the design we should be able to migrate to without rewriting application
-code — `WCFP_MACHINE` env var, the four-tier escalation queue, and the
+code — `CFP_MACHINE` env var, the four-tier escalation queue, and the
 GCS-as-canonical-store model all already align with K8s patterns.
 
 ## 5.1 Node pools
@@ -1193,8 +1199,8 @@ only those plus the orchestrator can talk to Redis.
 ## 5.6 Workload Identity → GCS
 
 ```yaml
-serviceAccountName: wcfp-runner
-# bound to GCP IAM service account wcfp-runner@PROJECT.iam.gserviceaccount.com
+serviceAccountName: cfp-runner
+# bound to GCP IAM service account cfp-runner@PROJECT.iam.gserviceaccount.com
 # with role roles/storage.objectAdmin on the bucket
 ```
 
@@ -1212,7 +1218,7 @@ ScaledObject scraper:
     - type: redis
       metadata:
         address: redis:6379
-        listName: wcfp:queue
+        listName: cfp:queue
         listLength: "10"  # 1 worker per 10 queued items
 ```
 
@@ -1269,7 +1275,7 @@ Stay on Docker Compose unless one of:
 The user-supplied list of 10 questions covered most of the surface. Three
 additional questions emerged during this review:
 
-- **Q11. Redis durability of `wcfp:cursor:{source}` and `wcfp:dead`** — these
+- **Q11. Redis durability of `cfp:cursor:{source}` and `cfp:dead`** — these
   are operational by classification but business-critical in practice. Loss
   of cursor → re-scrape from page 1; loss of dead-letter → silent failure.
   Recommendation: AOF + selective PG mirroring (Section 1, Q11).
@@ -1315,8 +1321,8 @@ not a rewrite.
 - Tier 1: `qwen3:4b` triage (PROMPT_TIER1)
 - Tier 2: `qwen3:14b` extraction (PROMPT_TIER2 + PROMPT_PERSON_EXTRACT +
   PROMPT_VENUE_EXTRACT + PROMPT_QUALITY_GUARD)
-- Tier 3 escalations land in `wcfp:dead` for manual review or v2.
-- Tier 4 escalations also land in `wcfp:dead` — the queue accumulates
+- Tier 3 escalations land in `cfp:dead` for manual review or v2.
+- Tier 4 escalations also land in `cfp:dead` — the queue accumulates
   until v2 ships and DGX/Tier-4-cloud drains it.
 
 **Database.** PostgreSQL 16 + pgvector, **no AGE**. Relational tables only.
@@ -1324,7 +1330,7 @@ Apache AGE was only needed for the live ontology graph; deferring the
 ontology pipeline (below) means deferring AGE entirely. The Docker image
 becomes `pgvector/pgvector:pg16` (official, well-maintained, just PG16 +
 pgvector). The init_db() function drops the `LOAD 'age'` /
-`create_graph('wcfp_graph')` lines.
+`create_graph('cfp_graph')` lines.
 
 **Queue.** Redis 7 + scraper as specified. No change.
 
@@ -1358,14 +1364,14 @@ disabled.
 **Lifecycle.** `make run` (or `bash run.sh`) does:
 ```
 docker compose up -d
-rclone copy gcs:wcfp-data/prod/pg_backup ./data/pg_backup
+rclone copy gcs:cfp-data/prod/pg_backup ./data/pg_backup
 pg_restore -d wikicfp ./data/pg_backup/latest.dump
 ollama pull qwen3:4b qwen3:14b nomic-embed-text
-python -m wcfp init-db
-python -m wcfp enqueue-seeds
-python -m wcfp run-pipeline
-python -m wcfp generate-reports
-python -m wcfp sync-push
+python -m cfp init-db
+python -m cfp enqueue-seeds
+python -m cfp run-pipeline
+python -m cfp generate-reports
+python -m cfp sync-push
 ```
 Single command. ~90 minutes wall clock for a steady-state run.
 
@@ -1386,33 +1392,33 @@ keeps requirements stable), `redis>=5.0`, `ollama>=0.3`, `beautifulsoup4>=4.12`,
 **v1 module list — what gets implemented:**
 ```
 config.py
-wcfp/__init__.py
-wcfp/models.py
-wcfp/prompts_parser.py
-wcfp/fetch.py
-wcfp/parsers/__init__.py
-wcfp/parsers/wikicfp.py
-wcfp/parsers/ai_deadlines.py
-wcfp/db.py
-wcfp/vectors.py            (pgvector upsert + ANN; no AGE references)
-wcfp/embed.py              (nomic-embed-text; batched per S14)
-wcfp/llm/__init__.py
-wcfp/llm/client.py
-wcfp/llm/tier1.py
-wcfp/llm/tier2.py
-wcfp/dedup.py              (pgvector threshold only — no LLM confirmation)
-wcfp/sync.py
-wcfp/pipeline.py
-wcfp/cli.py
+cfp/__init__.py
+cfp/models.py
+cfp/prompts_parser.py
+cfp/fetch.py
+cfp/parsers/__init__.py
+cfp/parsers/wikicfp.py
+cfp/parsers/ai_deadlines.py
+cfp/db.py
+cfp/vectors.py            (pgvector upsert + ANN; no AGE references)
+cfp/embed.py              (nomic-embed-text; batched per S14)
+cfp/llm/__init__.py
+cfp/llm/client.py
+cfp/llm/tier1.py
+cfp/llm/tier2.py
+cfp/dedup.py              (pgvector threshold only — no LLM confirmation)
+cfp/sync.py
+cfp/pipeline.py
+cfp/cli.py
 generate_md.py             (direct PG queries — no DuckDB)
 ```
 
 **v1 NOT implemented:**
-- `wcfp/graph.py` (Apache AGE)
-- `wcfp/llm/tier3.py`, `wcfp/llm/tier4.py`
-- `wcfp/llm/tools.py` (no Tier 3 → no tool calling needed)
-- `wcfp/ontology.py`
-- `wcfp/analytics.py` (DuckDB layer)
+- `cfp/graph.py` (Apache AGE)
+- `cfp/llm/tier3.py`, `cfp/llm/tier4.py`
+- `cfp/llm/tools.py` (no Tier 3 → no tool calling needed)
+- `cfp/ontology.py`
+- `cfp/analytics.py` (DuckDB layer)
 - All non-WikiCFP / non-ai-deadlines parsers
 
 ## 6.2 v2 (add after v1 ships with real data)
@@ -1421,25 +1427,25 @@ The ordering is roughly low-to-high risk:
 
 1. **Apache AGE knowledge graph.** Switch the Docker image from
    `pgvector/pgvector:pg16` to `apache/age:PG16_latest`. Add the AGE
-   extension setup to `init_db()`. Implement `wcfp/graph.py` with the sync
+   extension setup to `init_db()`. Implement `cfp/graph.py` with the sync
    logic from context.md §13. Run `graph rebuild` to populate AGE from the
    relational tables (Q4 ADR — relational is canonical, AGE is derived).
-2. **Tier 3 (qwen3:32b tool-calling).** Implement `wcfp/llm/tier3.py` and
-   `wcfp/llm/tools.py`. Re-enable Tier 3 in `pipeline.py`. This is what
+2. **Tier 3 (qwen3:32b tool-calling).** Implement `cfp/llm/tier3.py` and
+   `cfp/llm/tools.py`. Re-enable Tier 3 in `pipeline.py`. This is what
    handles unknown external sites (IEEE, ACM, conference homepages).
 3. **Tier 4 (deepseek-r1:70b overnight batch).** Implement
-   `wcfp/llm/tier4.py`. Add the `tier4-batch` CLI command. Drains
-   `wcfp:dead` and `wcfp:escalate:tier4` on a DGX (or via `tier4-cloud`).
-4. **DeepSeek-R1 dedup confirmation.** Add the LLM call to `wcfp/dedup.py`
+   `cfp/llm/tier4.py`. Add the `tier4-batch` CLI command. Drains
+   `cfp:dead` and `cfp:escalate:tier4` on a DGX (or via `tier4-cloud`).
+4. **DeepSeek-R1 dedup confirmation.** Add the LLM call to `cfp/dedup.py`
    for records in the 0.92–0.97 band. Replaces the v1 manual review path.
-5. **Ontology pipeline.** Implement `wcfp/ontology.py` with the
+5. **Ontology pipeline.** Implement `cfp/ontology.py` with the
    AGE→owlready2→.owl export. Bootstrap with the 13 Category enum values
    as root Concept nodes (arch.md §1 Q3).
-6. **DuckDB analytics.** Implement `wcfp/analytics.py`. Move all reporting
+6. **DuckDB analytics.** Implement `cfp/analytics.py`. Move all reporting
    queries from `generate_md.py` to DuckDB via `postgres_scanner`.
 7. **Additional parsers.** EDAS, EasyChair, OpenReview, HotCRP, IEEE, ACM,
-   Springer, USENIX. Each becomes a separate file in `wcfp/parsers/`.
-8. **Gmail parser** (`wcfp/parsers/email_gmail.py`) for direct CFP emails.
+   Springer, USENIX. Each becomes a separate file in `cfp/parsers/`.
+8. **Gmail parser** (`cfp/parsers/email_gmail.py`) for direct CFP emails.
 9. **Kubernetes migration.** As specified in Section 5.
 
 ## 6.3 What does NOT change between v1 and v2
@@ -1447,12 +1453,12 @@ The ordering is roughly low-to-high risk:
 The following stay identical — that's why this is an additive migration,
 not a rewrite:
 - `prompts.md` (v2 just enables more of it)
-- `wcfp/models.py` (Event already has all v2 fields)
-- `wcfp/db.py` (the schema is the v2 superset; AGE setup is in an `if`)
-- `wcfp/parsers/wikicfp.py` (parser doesn't care about tier count)
-- `wcfp/fetch.py` and `wcfp/queue.py` (queue / rate-limit infra)
-- `wcfp/embed.py` (embedding model is the same in v1 and v2)
-- `wcfp/sync.py` (GCS push/pull is unchanged)
+- `cfp/models.py` (Event already has all v2 fields)
+- `cfp/db.py` (the schema is the v2 superset; AGE setup is in an `if`)
+- `cfp/parsers/wikicfp.py` (parser doesn't care about tier count)
+- `cfp/fetch.py` and `cfp/queue.py` (queue / rate-limit infra)
+- `cfp/embed.py` (embedding model is the same in v1 and v2)
+- `cfp/sync.py` (GCS push/pull is unchanged)
 
 In practice this means: ship v1, run it weekly for a month or two, observe
 real failure modes on real data, **then** decide whether v2 components are

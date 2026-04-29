@@ -28,9 +28,9 @@ Fully automated pipeline that:
 The pipeline runs on **one machine at a time**. Any machine with Docker and Ollama
 installed can restore state from GCS, run a session, sync back, and wipe local data.
 
-Set `WCFP_MACHINE` to the profile that matches the current machine:
+Set `CFP_MACHINE` to the profile that matches the current machine:
 
-| `WCFP_MACHINE` | Min VRAM | Local tiers                                          |
+| `CFP_MACHINE` | Min VRAM | Local tiers                                          |
 |----------------|----------|------------------------------------------------------|
 | `dgx`          | 80 GB    | All tiers + deepseek-r1:70b for Tier 4               |
 | `gpu_large`    | 24 GB    | Tiers 1–4 (qwen3:4b + qwen3:14b + qwen3:32b + deepseek-r1:32b) |
@@ -40,7 +40,7 @@ Set `WCFP_MACHINE` to the profile that matches the current machine:
 
 `nomic-embed-text` runs on all profiles (300 MB VRAM / CPU fallback).
 
-Jobs whose required model is absent are pushed to `wcfp:escalate:tier4` and
+Jobs whose required model is absent are pushed to `cfp:escalate:tier4` and
 accumulate until the next session on a capable machine. Nothing is lost.
 
 ---
@@ -168,7 +168,7 @@ Why not MongoDB: no graph traversal, no native vector search, weaker analytics.
 One graph: **wcfp_graph**. All Cypher runs via:
 
 ```sql
-SELECT * FROM cypher('wcfp_graph', $$ <cypher here> $$) AS (col agtype);
+SELECT * FROM cypher('cfp_graph', $$ <cypher here> $$) AS (col agtype);
 ```
 
 ### Node labels
@@ -245,7 +245,7 @@ JOIN event_embeddings emb ON e.event_id = emb.event_id
 WHERE e.start_date > CURRENT_DATE AND e.region = 'Europe'
   AND e.event_id IN (
     SELECT (row->>'event_id')::int
-    FROM cypher('wcfp_graph', $$
+    FROM cypher('cfp_graph', $$
       MATCH (c:Conference)-[:CLASSIFIED_AS]->(cls)
             -[:IS_A*0..]->(root {name: 'ChipDesign'})
       RETURN c.event_id
@@ -256,7 +256,7 @@ ORDER BY similarity DESC LIMIT 10;
 
 ---
 
-## 6. Relational Schema (`wcfp/db.py`)
+## 6. Relational Schema (`cfp/db.py`)
 
 Key tables: **organisations**, **series** (FK → organisations),
 **venues**, **people**, **events** (FK → series, venues),
@@ -275,7 +275,7 @@ Upserts use `INSERT ... ON CONFLICT (pk) DO UPDATE SET ...`
 
 ---
 
-## 7. DuckDB as Analytics Layer (`wcfp/analytics.py`)
+## 7. DuckDB as Analytics Layer (`cfp/analytics.py`)
 
 DuckDB owns NO storage. It attaches to PostgreSQL via postgres_scanner
 and runs its columnar OLAP engine on the data.
@@ -297,19 +297,19 @@ DuckDB never writes to disk in this project — it is a calculation layer only.
 
 ---
 
-## 8. Redis Key Schema (`wcfp/queue.py`)
+## 8. Redis Key Schema (`cfp/queue.py`)
 
 | Key pattern                | Type       | TTL           | Purpose                                           |
 |----------------------------|------------|---------------|---------------------------------------------------|
-| `wcfp:queue`               | sorted set | none          | Priority queue (score = priority×1e10 + epoch_ms) |
-| `wcfp:inflight:{job_id}`   | string     | 600 s         | Worker lease; expiry auto-returns job to queue    |
-| `wcfp:seen:{sha1(url)}`    | string "1" | 30 days       | SETNX dedup before enqueue                        |
-| `wcfp:rate:{domain}`       | string "1" | crawl_delay_s | SETNX rate limiter per domain                     |
-| `wcfp:robots:{domain}`     | string     | 1 day         | Cached robots.txt                                 |
-| `wcfp:dead`                | list       | none          | RPUSH after MAX_RETRIES                           |
-| `wcfp:escalate:tier{N}`    | list       | none          | Jobs awaiting next LLM tier                       |
-| `wcfp:metrics:tier{N}`     | hash       | none          | ok / escalated / failed counters                  |
-| `wcfp:cursor:{source}`     | string     | none          | Resume page cursor per source                     |
+| `cfp:queue`               | sorted set | none          | Priority queue (score = priority×1e10 + epoch_ms) |
+| `cfp:inflight:{job_id}`   | string     | 600 s         | Worker lease; expiry auto-returns job to queue    |
+| `cfp:seen:{sha1(url)}`    | string "1" | 30 days       | SETNX dedup before enqueue                        |
+| `cfp:rate:{domain}`       | string "1" | crawl_delay_s | SETNX rate limiter per domain                     |
+| `cfp:robots:{domain}`     | string     | 1 day         | Cached robots.txt                                 |
+| `cfp:dead`                | list       | none          | RPUSH after MAX_RETRIES                           |
+| `cfp:escalate:tier{N}`    | list       | none          | Jobs awaiting next LLM tier                       |
+| `cfp:metrics:tier{N}`     | hash       | none          | ok / escalated / failed counters                  |
+| `cfp:cursor:{source}`     | string     | none          | Resume page cursor per source                     |
 
 ---
 
@@ -338,13 +338,13 @@ data already in the database (dedup comparison, ontology validation).
 
 ```
 wiki-cfp/
-├── config.py            PG_DSN, REDIS_URL, OLLAMA_HOST, WCFP_MACHINE, PROFILE_MODELS,
+├── config.py            PG_DSN, REDIS_URL, OLLAMA_HOST, CFP_MACHINE, PROFILE_MODELS,
 │                        TIER_THRESHOLD, EMBED_DIM, AGE_GRAPH
 ├── prompts.md           search queries + LLM prompt bodies (machine-read)
 ├── context.md           this file
 ├── docker-compose.yml   PostgreSQL 16 + pgvector + Redis (v1; v2 swaps to apache/age)
 ├── requirements.txt
-├── wcfp/
+├── cfp/
 │   ├── models.py        Event, Person, Organisation, Venue, Series,
 │   │                    ScrapeJob, TierResult, EscalationPayload, OntologyEdge
 │   ├── prompts_parser.py  parse_prompts_md(path) -> ParsedPrompts
@@ -368,7 +368,7 @@ wiki-cfp/
 │   ├── dedup.py         (v1: pgvector-only; v2 adds DeepSeek-R1) pgvector ANN + deepseek-r1:32b confirmation
 │   ├── ontology.py      (v2: AGE→owlready2→.owl) AGE graph -> owlready2 -> .owl export for Protege
 │   ├── pipeline.py      orchestrator
-│   └── cli.py           python -m wcfp <command>
+│   └── cli.py           python -m cfp <command>
 ├── generate_md.py       DuckDB analytics -> reports/*.md
 ├── reports/
 ├── data/
@@ -383,7 +383,7 @@ Import rule: `models.py` and `config.py` import nothing project-internal.
 
 ---
 
-## 11. Data Models (`wcfp/models.py`)
+## 11. Data Models (`cfp/models.py`)
 
 Key dataclasses (all `@dataclass(slots=True)`):
 `Event`, `Person`, `Organisation`, `Venue`, `Series`, `ScrapeJob`,
@@ -398,20 +398,20 @@ Enums: `Category` (AI/ML/DevOps/...), `Tier` (1-4), `JobStatus`,
 ## 12. Configuration (`config.py`)
 
 ```python
-PG_DSN         = os.getenv("PG_DSN", "postgresql://wcfp:wcfp@localhost:5432/wikicfp")
+PG_DSN         = os.getenv("PG_DSN", "postgresql://cfp:cfp@localhost:5432/cfp")
 REDIS_URL      = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 OLLAMA_HOST    = os.getenv("OLLAMA_HOST", "http://localhost:11434")   # single local daemon
-AGE_GRAPH      = "wcfp_graph"
+AGE_GRAPH      = "cfp_graph"
 EMBED_DIM      = 768
 DEDUP_COSINE   = 0.92
 TIER_THRESHOLD = {1: 0.85, 2: 0.85, 3: 0.80}
 LONG_CONTEXT_TOKENS = 32_000
 
 # Machine profile — controls which models are pulled and which tiers run locally
-WCFP_MACHINE   = os.getenv("WCFP_MACHINE", "gpu_mid")   # dgx|gpu_large|gpu_mid|gpu_small|cpu_only
+CFP_MACHINE   = os.getenv("CFP_MACHINE", "gpu_mid")   # dgx|gpu_large|gpu_mid|gpu_small|cpu_only
 
 # GCS / rclone settings
-GCS_BUCKET     = os.getenv("GCS_BUCKET", "wcfp-data")
+GCS_BUCKET     = os.getenv("GCS_BUCKET", "cfp-data")
 GCS_PREFIX     = os.getenv("GCS_PREFIX", "prod")
 RCLONE_REMOTE  = os.getenv("RCLONE_REMOTE", "gcs")      # name of the rclone remote
 
@@ -433,17 +433,17 @@ PROFILE_MODELS = {
 TIER 1  qwen3:4b   RTX 3080  ~200 rec/min
         Output: {is_cfp, categories, is_virtual, confidence}
         conf >= 0.85  →  write to PostgreSQL
-        conf <  0.85  →  Redis wcfp:escalate:tier2
+        conf <  0.85  →  Redis cfp:escalate:tier2
 
 TIER 2  qwen3:14b  RTX 3080
         Output: full Event + Person[] + Venue + Organisation[]
         conf >= 0.85  →  PostgreSQL + graph.py syncs to AGE
-        conf <  0.85  →  Redis wcfp:escalate:tier3
+        conf <  0.85  →  Redis cfp:escalate:tier3
 
 TIER 3  qwen3:32b  RTX 4090  (tool calling for unknown sites)
         Output: Event + archive_urls + tool_trace
         conf >= 0.80  →  PostgreSQL + AGE
-        conf <  0.80  →  Redis wcfp:escalate:tier4
+        conf <  0.80  →  Redis cfp:escalate:tier4
 
 TIER 4  deepseek-r1:70b  dgx/gpu_large profile  (overnight batch, no tool calling)
         Output: final Event + OntologyEdge[] + dedup:{same, reason}
@@ -473,13 +473,13 @@ The AGE graph IS the live ontology. The `.owl` file is a read-only export.
 ## 15. Error Handling and Portable Install
 
 **Error classes**: `RetryableError` (429/5xx/timeout/LLM JSON decode) and
-`FatalError` (404/410/robots disallow). Both push to `wcfp:dead` after MAX_RETRIES.
+`FatalError` (404/410/robots disallow). Both push to `cfp:dead` after MAX_RETRIES.
 The next Tier 4 batch drains the dead-letter list.
 
 **Portable clone (any machine)**:
 ```bash
 git clone <repo> && cd wiki-cfp
-WCFP_MACHINE=gpu_large GCS_BUCKET=wcfp-data bash setup.sh
+CFP_MACHINE=gpu_large GCS_BUCKET=cfp-data bash setup.sh
 ```
 setup.sh sequence: venv + pip → docker compose up → rclone pull pg_backup →
 pg_restore → ollama pull (profile-specific models) → verify connectivity.
@@ -496,20 +496,20 @@ v2 switches to `apache/age:PG16_latest` when AGE is added.
 
 ---
 
-## 16. CLI (`python -m wcfp <command>`)
+## 16. CLI (`python -m cfp <command>`)
 
 | Command            | Action                                                          |
 |--------------------|-----------------------------------------------------------------|
 | `init-db`          | CREATE tables + extensions + AGE graph `wcfp_graph`            |
 | `enqueue-seeds`    | Parse prompts.md, push all search/index URLs to Redis           |
 | `run-pipeline`     | Long-running: dequeue → fetch → parse → tiers → PG + AGE      |
-| `tier4-batch`      | Drain wcfp:dead + escalations on DGX overnight (v2: requires deepseek-r1:70b on dgx/gpu_large) |
+| `tier4-batch`      | Drain cfp:dead + escalations on DGX overnight (v2: requires deepseek-r1:70b on dgx/gpu_large) |
 | `dedup-sweep`      | Recompute pgvector embeddings, run pairwise dedup (v1: pgvector only; v2: adds DeepSeek-R1 confirmation) |
 | `build-ontology`   | Walk AGE graph → owlready2 → ontology/ (v2: requires Apache AGE) |
 | `generate-reports` | DuckDB analytics → reports/*.md                                 |
 | `sync-push`        | pg_dump + rclone push to cloud storage                          |
 | `sync-pull`        | rclone pull + pg_restore from cloud storage                     |
-| `replay-dead`      | Pop N from wcfp:dead, re-enqueue at original priority           |
+| `replay-dead`      | Pop N from cfp:dead, re-enqueue at original priority           |
 
 ---
 
@@ -528,12 +528,16 @@ v2 switches to `apache/age:PG16_latest` when AGE is added.
 | 2026-04-25 | Qwen3 for ALL tool calling                | Only local family with reliable Ollama tool-call support      |
 | 2026-04-25 | DeepSeek-R1 for pure reasoning only       | Best accuracy for yes/no decisions; no tool overhead needed   |
 | 2026-04-25 | rclone + Backblaze B2 for state sync      | Cheapest S3-compatible; handles pg_dump + Parquet archives    |
-| 2026-04-25 | WCFP_MACHINE env var for model routing    | Each machine pulls only the models it needs                   |
+| 2026-04-25 | CFP_MACHINE env var for model routing    | Each machine pulls only the models it needs                   |
 | 2026-04-25 | 4-tier pipeline: 4b → 14b → 32b → 70b   | ~80% resolved by qwen3:4b; DGX only for the hard 1%          |
 | 2026-04-26 | Single-machine operation + GCS persistence | Any machine can run; GCS is the durable store; local state is always ephemeral |
-| 2026-04-26 | WCFP_MACHINE profile replaces per-host routing | One Ollama daemon on localhost; tiers skipped if model absent; jobs escalate |
+| 2026-04-26 | CFP_MACHINE profile replaces per-host routing | One Ollama daemon on localhost; tiers skipped if model absent; jobs escalate |
 | 2026-04-26 | v1 ships without AGE, DuckDB, Tier 3+4, ontology | Faster path to real data; v2 adds these as an additive migration — arch.md §6 |
 | 2026-04-26 | v1 Docker image: pgvector/pgvector:pg16 (not apache/age) | AGE adds extension complexity; defer until ontology pipeline is needed |
+| 2026-04-29 | Ollama: named volume `ollama_models:/root/.ollama` for local Compose (Q10) | One-time model pull; reuse across restarts; GKE pre-baked images deferred to v2 |
+| 2026-04-29 | LLM JSON failures: local repair → 1 same-tier retry → escalate (Q12) | Balances cost vs correctness; parse-fail rate tracked per model |
+| 2026-04-29 | Pinned quant tags in PROFILE_MODELS: q4_K_M default, q8_0 on dgx (Q14) | Prevents Ollama silently degrading JSON validity on small VRAM |
+| 2026-04-29 | Renamed project identifiers: cfp (not wcfp/wikicfp) throughout | Consistent branding; wcfp/wikicfp only remain as external website references |
 
 ---
 
@@ -545,21 +549,21 @@ Every pipeline session follows four phases. `setup.sh` automates phases 1 and 4.
 ```bash
 docker compose up -d
 rclone copy $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/pg_backup/ ./data/pg_backup/
-pg_restore -h localhost -U wcfp -d wikicfp -F c ./data/pg_backup/latest.dump
-ollama pull $(python -m wcfp list-models)   # pulls only what WCFP_MACHINE profile needs
+pg_restore -h localhost -U cfp -d cfp -F c ./data/pg_backup/latest.dump
+ollama pull $(python -m cfp list-models)   # pulls only what CFP_MACHINE profile needs
 ```
 
 ### Phase 2 — Run
 ```bash
-python -m wcfp init-db           # idempotent: skips if schema exists
-python -m wcfp enqueue-seeds     # parse prompts.md → push URLs into Redis queue
-python -m wcfp run-pipeline      # dequeue → fetch → parse → tier pipeline → PG + AGE
-python -m wcfp generate-reports  # DuckDB → reports/*.md
+python -m cfp init-db           # idempotent: skips if schema exists
+python -m cfp enqueue-seeds     # parse prompts.md → push URLs into Redis queue
+python -m cfp run-pipeline      # dequeue → fetch → parse → tier pipeline → PG + AGE
+python -m cfp generate-reports  # DuckDB → reports/*.md
 ```
 
 ### Phase 3 — Sync
 ```bash
-python -m wcfp sync-push         # internally runs:
+python -m cfp sync-push         # internally runs:
   # pg_dump -F c -f ./data/pg_backup/latest.dump
   # rclone copy ./data/pg_backup/ $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/pg_backup/
   # rclone copy ./reports/        $RCLONE_REMOTE:$GCS_BUCKET/$GCS_PREFIX/reports/
@@ -636,29 +640,23 @@ alongside Compose from v1.0; ship Compose as the default; activate K8s when
 multi-source parallel or scheduled-cloud-runs become needs. See `arch.md §1
 Q9` and §5.
 
-**Q10. Ollama model storage.** 51 GB total on `gpu_large`. Recommendation:
-named volume `ollama-models:/root/.ollama` for local dev; pre-baked profile-
-specific Docker images for GKE (per-node kubelet cache amortises pull). See
-`arch.md §1 Q10`.
+**Q10. Ollama model storage.** **RESOLVED (2026-04-29).** Named volume `ollama_models:/root/.ollama` added to `docker-compose.yml` for local Compose. GKE pre-baked profile images deferred to v2.
+See `arch.md §1 Q10`.
 
-**Q11. Redis durability.** `wcfp:cursor:{source}` and `wcfp:dead` are
+**Q11. Redis durability.** `cfp:cursor:{source}` and `cfp:dead` are
 operational by name but business-critical in practice. Recommendation: enable
 AOF persistence (`--appendonly yes`); mirror cursor to `sites.last_cursor` and
 dead-letter audit rows to PG. See `arch.md §1 Q11`.
 
-**Q12. LLM JSON-mode failure recovery.** Quantised models occasionally emit
-malformed JSON. Recommendation: local repair (json5/regex) → one same-tier
-retry with reminder preamble → escalate one tier. Track parse-failure rate
-per model in `wcfp:metrics:parse_fail:{model}`. See `arch.md §1 Q12`.
+**Q12. LLM JSON-mode failure recovery.** **RESOLVED (2026-04-29).** Local JSON repair → one same-tier retry → escalate. `JSON_RETRY_SAME_TIER = 1`, `JSON_REPAIR_ENABLED = True` in `config.py`. Track `cfp:metrics:parse_fail:{model}`.
+See `arch.md §1 Q12`.
 
 **Q13. Cypher query cost ceiling.** Unbounded `*0..` traversals slow as
 ontology deepens and `CLASSIFIED_AS` edges grow. Recommendation: cap depth
 at `*0..6` defensively now; materialise `concept_descendants` transitive
 closure when graph exceeds 5k Concept nodes. See `arch.md §1 Q13`.
 
-**Q14. Quantisation policy.** Ollama's defaults silently pick Q4 quants on
-small VRAM, harming JSON validity. Recommendation: pin quantisation per
-profile in `PROFILE_MODELS` and add a weekly accuracy regression test.
+**Q14. Quantisation policy.** **RESOLVED (2026-04-29).** Pinned per-profile quant tags in `PROFILE_MODELS` in `codegen/01` (q4_K_M for gpu_small/gpu_mid/gpu_large, q8_0 for dgx).
 See `arch.md §1 Q14`.
 
 **Q15. Workshop entity modelling.** `Workshop` graph node vs `is_workshop`

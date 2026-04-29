@@ -120,8 +120,8 @@ high-confidence Tier 3 extraction. See `SESSION.md` constraint 8 — never
 overwrite `notification`, `camera_ready`, `rank`, or `notes` with NULL.
 
 ### Connection strings (DSNs)
-A DSN is a URL telling psycopg3 where to find the database. `postgresql://wcfp:wcfp@localhost:5432/wikicfp` reads as: protocol `postgresql`, user `wcfp`,
-password `wcfp`, host `localhost`, port `5432`, database `wikicfp`. Stored in
+A DSN is a URL telling psycopg3 where to find the database. `postgresql://cfp:cfp@localhost:5432/cfp` reads as: protocol `postgresql`, user `cfp`,
+password `cfp`, host `localhost`, port `5432`, database `wikicfp`. Stored in
 `config.py` as `PG_DSN`. The library hides the network details from
 application code.
 
@@ -262,7 +262,7 @@ See `context.md §5` for the full list. Key nodes: `Conference`,
 
 ### Why AGE runs inside PostgreSQL
 Apache AGE is a PostgreSQL extension. It does not run as a separate process.
-A Cypher query is wrapped as `SELECT * FROM cypher('wcfp_graph', $$ ... $$) AS (col agtype);` — a regular SQL statement. This means: one connection,
+A Cypher query is wrapped as `SELECT * FROM cypher('cfp_graph', $$ ... $$) AS (col agtype);` — a regular SQL statement. This means: one connection,
 one transaction, one backup. A graph write and a relational write happen
 atomically inside `BEGIN ... COMMIT`. No two-phase commit, no eventual
 consistency, no separate cluster.
@@ -277,7 +277,7 @@ end of `context.md §5`. No other open-source stack supports this.
 **OWL** is the W3C standard for representing ontologies — formal vocabularies
 of a domain. **Protege** is a desktop app for editing OWL files visually.
 In this project the live ontology is the AGE graph; the `.owl` file is a
-read-only export produced by `wcfp/ontology.py`. You open the `.owl` in
+read-only export produced by `cfp/ontology.py`. You open the `.owl` in
 Protege to inspect or share the taxonomy with collaborators, but you do not
 edit it there — edits would not flow back. See `context.md §14`.
 
@@ -346,8 +346,8 @@ design — every command is atomic, no locking required.
 
 ### Sorted sets
 A sorted set associates each member with a numeric score. The store keeps
-members ordered by score. Operations: `ZADD wcfp:queue 12345 url1` (add a
-member with score 12345), `ZPOPMIN wcfp:queue` (pop the lowest-scored
+members ordered by score. Operations: `ZADD cfp:queue 12345 url1` (add a
+member with score 12345), `ZPOPMIN cfp:queue` (pop the lowest-scored
 member). Both are O(log N). The pipeline uses score = `priority × 1e10 +
 epoch_ms`, encoding both priority (high bits) and FIFO order within priority
 (low bits). One data structure, two semantics.
@@ -355,24 +355,24 @@ epoch_ms`, encoding both priority (high bits) and FIFO order within priority
 ### SETNX
 "Set if not exists" — `SET key value NX`. Returns success only if the key
 was absent. This is how the dedup cache works: before enqueuing a URL, the
-pipeline runs `SETNX wcfp:seen:{sha1(url)} 1`. If the SETNX succeeds, this
+pipeline runs `SETNX cfp:seen:{sha1(url)} 1`. If the SETNX succeeds, this
 URL is new — proceed to enqueue. If it fails, another worker already saw
 this URL — skip. Atomic and lock-free.
 
 ### TTL (Time To Live)
 A key can be set to expire after N seconds. Per-domain rate limiting works
-like this: after fetching from `ieee.org`, do `SET wcfp:rate:ieee.org 1 EX 8`
+like this: after fetching from `ieee.org`, do `SET cfp:rate:ieee.org 1 EX 8`
 (set with 8-second expiry). The next fetch attempt checks for the key's
 existence; if present, wait. When the key expires, the rate limit lifts
 itself. No background sweeper needed.
 
 ### Inflight leases
-When a worker dequeues a job, it writes `SET wcfp:inflight:{job_id} <worker_id> EX 600` — an inflight key with 10-minute TTL. If the worker
+When a worker dequeues a job, it writes `SET cfp:inflight:{job_id} <worker_id> EX 600` — an inflight key with 10-minute TTL. If the worker
 crashes mid-job, the key expires automatically, and a separate sweeper
 re-enqueues the job. Crash safety with no coordinator. See `context.md §8`.
 
 ### Dead-letter list
-After `MAX_RETRIES` failures, a job is `RPUSH`ed onto `wcfp:dead`. The Tier
+After `MAX_RETRIES` failures, a job is `RPUSH`ed onto `cfp:dead`. The Tier
 4 batch process drains this list. Dead jobs are not lost; they accumulate
 until processed. See `arch.md Q5` for the small-machine accumulation problem.
 
@@ -402,7 +402,7 @@ chapters are timeless.
 A **system prompt** sets the model's role and rules — invariant across calls.
 A **user message** is the per-record payload. In this project, every prompt
 in `prompts.md` is a system prompt; the user message is constructed by
-`wcfp/llm/tier{N}.py` (a JSON object specific to that record). Splitting them
+`cfp/llm/tier{N}.py` (a JSON object specific to that record). Splitting them
 is what lets the same prompt body apply to thousands of records without
 re-tokenising the rules.
 
@@ -434,7 +434,7 @@ Local models ship in compressed forms. **Q4** uses 4 bits per weight (~4×
 smaller, runs on tiny GPUs, noticeably worse JSON validity). **Q8** uses 8
 bits (~2× smaller, near-original quality). **Full precision (fp16)** is
 original. The trade-off is VRAM vs accuracy. `arch.md Q14` recommends
-pinning quantisation per `WCFP_MACHINE` profile so we don't silently
+pinning quantisation per `CFP_MACHINE` profile so we don't silently
 degrade on `gpu_small`.
 
 ### Context window
@@ -485,7 +485,7 @@ fill in missing fields. About 4% of records.
 
 ### Tier 4 — deepseek-r1:70b — overnight batch
 The hardest 1%: contradictions, ontology edges that need careful reasoning,
-unresolvable dedup pairs, and the `wcfp:dead` queue. Always final — Tier 4
+unresolvable dedup pairs, and the `cfp:dead` queue. Always final — Tier 4
 output is committed without further escalation. Runs only on `dgx`.
 
 ### PROMPT_QUALITY_GUARD — the new pre-write gate
@@ -566,7 +566,7 @@ Cypher.
 ### robots.txt
 A text file at the root of every well-behaved website (`example.com/robots.txt`) listing which paths crawlers should and should not fetch. Honouring
 it is both ethical and legally prudent. The pipeline caches each domain's
-robots.txt for 24h in `wcfp:robots:{domain}` and refuses any disallowed URL
+robots.txt for 24h in `cfp:robots:{domain}` and refuses any disallowed URL
 (generates a `FatalError`).
 
 ### Gaussian delay
@@ -594,7 +594,7 @@ the first run, the seen-URL cache (30-day TTL) means most pages are
 skipped — steady state is ~30 minutes per session. See `arch.md Q7`.
 
 ### Seen-URL dedup
-Before enqueuing, the scraper does `SETNX wcfp:seen:{sha1(url)} 1` with
+Before enqueuing, the scraper does `SETNX cfp:seen:{sha1(url)} 1` with
 30-day TTL. If the SETNX fails, the URL was queued recently — skip. Without
 this, every nightly cron would re-queue the same 5,680 WikiCFP URLs and
 the queue would explode.
@@ -671,14 +671,14 @@ theory: *Data Matching* by Peter Christen.
 ### What Google Cloud Storage is
 GCS is Google's object store — like S3 on AWS. You store **objects** (blobs
 of bytes) inside **buckets** (named containers), addressed by **prefixes**
-(directory-like keys). `gs://wcfp-data/prod/pg_backup/latest.dump` reads
-as: bucket `wcfp-data`, prefix `prod/pg_backup/`, object `latest.dump`.
+(directory-like keys). `gs://cfp-data/prod/pg_backup/latest.dump` reads
+as: bucket `cfp-data`, prefix `prod/pg_backup/`, object `latest.dump`.
 Cheap (~$0.02/GB/month), durable (11 nines), region-replicated.
 
 ### rclone
 A CLI tool that talks to many cloud storage providers (GCS, S3, B2,
 Backblaze, Dropbox) with one syntax. `rclone copy ./data/pg_backup/
-gcs:wcfp-data/prod/pg_backup/` uploads a directory. Like rsync, but for
+gcs:cfp-data/prod/pg_backup/` uploads a directory. Like rsync, but for
 the cloud. The pipeline uses it because it's provider-agnostic — switching
 from GCS to B2 needs only a config change.
 
@@ -766,7 +766,7 @@ moving across zones costs a snapshot+restore.
 
 ### KEDA — Kubernetes Event-Driven Autoscaler
 A Kubernetes add-on that scales pods based on external metrics. The
-pipeline's plan: scale scraper pods 0→20 based on `LLEN wcfp:queue` (Redis
+pipeline's plan: scale scraper pods 0→20 based on `LLEN cfp:queue` (Redis
 queue depth). `arch.md S7`. Useful when Tier 3 follows external links to
 hundreds of conference websites — the per-domain rate limit doesn't
 saturate any single one.
@@ -814,12 +814,12 @@ Industry standard for the Linux side of the world.
 
 ### What a metric looks like
 ```
-wcfp_scrape_pages_total{source="wikicfp",outcome="ok"} 4123
-wcfp_scrape_pages_total{source="wikicfp",outcome="failed"} 12
+cfp_scrape_pages_total{source="wikicfp",outcome="ok"} 4123
+cfp_scrape_pages_total{source="wikicfp",outcome="failed"} 12
 wcfp_tier_records_total{tier="1",outcome="escalated"} 219
 ```
 Each line is a counter or gauge with labels. You query
-`rate(wcfp_scrape_pages_total[5m])` to get pages-per-second over the last
+`rate(cfp_scrape_pages_total[5m])` to get pages-per-second over the last
 5 minutes.
 
 ### Grafana
@@ -843,7 +843,7 @@ See the full list in `arch.md S8`.
 `/healthz` returns `200 OK` with a small JSON body when the pipeline is
 healthy. Kubernetes uses it to decide when to restart a pod. The plan
 (`arch.md S2`): a small FastAPI app exposing `/health`, `/metrics`,
-`/queue`, `/runs`. Slot it into `wcfp/cli.py serve --port 8080`.
+`/queue`, `/runs`. Slot it into `cfp/cli.py serve --port 8080`.
 
 ### Structured logging
 Free-text logs ("scraped url okay") are unsearchable at scale. Structured
@@ -883,7 +883,7 @@ worker overlap multiple in-flight requests against different domains, giving
 performance change available without parallel hardware.
 
 ### How it fits
-`wcfp/fetch.py` will use `aiohttp.ClientSession` and `asyncio.gather()` to
+`cfp/fetch.py` will use `aiohttp.ClientSession` and `asyncio.gather()` to
 fan out concurrent fetches against multiple domains, replacing the synchronous
 `requests` library used in the original `scraper.py` — see `arch.md §S13`
 ("Async HTTP in fetch.py"). Per-domain Gaussian delay still serialises calls
@@ -914,7 +914,7 @@ walks event records correctly. Using regex on raw HTML would be far more
 fragile.
 
 ### How it fits
-`wcfp/parsers/wikicfp.py` copies `find_data_table()` and `parse_table()`
+`cfp/parsers/wikicfp.py` copies `find_data_table()` and `parse_table()`
 verbatim from the original `scraper.py` — see `codegen/04_wikicfp_parser.md`
 lines 90–143. Both functions take a `BeautifulSoup` object built with the
 `lxml` parser backend (faster than the stdlib `html.parser`).
@@ -946,11 +946,11 @@ same instant, jitter spreads their retries across time so the recovering
 server doesn't get re-stampeded.
 
 ### How it fits
-`wcfp/fetch.py` raises `RetryableError` on 429/5xx/timeout and `FatalError`
+`cfp/fetch.py` raises `RetryableError` on 429/5xx/timeout and `FatalError`
 on 404/410/robots-disallow — see `context.md §15`. The retry policy reads
 `MAX_RETRIES=5`, `RETRY_BACKOFF_BASE=2.0`, and `RETRY_BACKOFF_CAP=600` from
-`wcfp/config.py` (codegen/01 lines 79–81). After the cap, jobs go to
-`wcfp:dead` for Tier 4 batch processing.
+`cfp/config.py` (codegen/01 lines 79–81). After the cap, jobs go to
+`cfp:dead` for Tier 4 batch processing.
 
 ### Further reading
 *HTTP: The Definitive Guide* by Gourley and Totty.
@@ -977,7 +977,7 @@ need fuzzy parsing — and a guard that returns `None` (not a wrong guess) for
 "TBD" or "N/A".
 
 ### How it fits
-`_safe_parse_date()` in `wcfp/parsers/wikicfp.py` (codegen/04 lines 48–66) is
+`_safe_parse_date()` in `cfp/parsers/wikicfp.py` (codegen/04 lines 48–66) is
 the pipeline's single entry point for date parsing: it calls
 `dateutil.parser.parse(fuzzy=True)`, returns `None` on failure, and downstream
 code uses `COALESCE` to avoid overwriting a known date with a parse failure.
@@ -1071,10 +1071,10 @@ targets English-language CS venues and saves bandwidth by skipping pages it
 won't classify well anyway.
 
 ### How it fits
-`wcfp/config.py` sets `HUMAN_DELAY_MEAN=8.0`, `HUMAN_DELAY_STD=2.5`, and
+`cfp/config.py` sets `HUMAN_DELAY_MEAN=8.0`, `HUMAN_DELAY_STD=2.5`, and
 `HUMAN_DELAY_LONG_PROB=0.10` (codegen/01 lines 72–76) — the inter-request
 politeness budget. Robots.txt is fetched per-domain, cached for 24h in
-`wcfp:robots:{domain}`, and a disallow raises `FatalError`.
+`cfp:robots:{domain}`, and a disallow raises `FatalError`.
 
 ### Further reading
 *Web Scraping with Python* by Ryan Mitchell — the legal chapter; the EFF
@@ -1165,8 +1165,8 @@ And keeping secrets out of the repo eliminates the most common credential
 leak: an accidental `git add -A` of `.env`.
 
 ### How it fits
-`wcfp/config.py` reads every external dependency through `os.getenv()`:
-`PG_DSN`, `REDIS_URL`, `OLLAMA_HOST`, `WCFP_MACHINE`, `GCS_BUCKET`,
+`cfp/config.py` reads every external dependency through `os.getenv()`:
+`PG_DSN`, `REDIS_URL`, `OLLAMA_HOST`, `CFP_MACHINE`, `GCS_BUCKET`,
 `GCS_PREFIX`, `RCLONE_REMOTE`, `USER_AGENT` — see codegen/01 lines 25–87.
 Every getenv call has a sensible local-dev default so `make run` works on a
 fresh laptop.
@@ -1199,7 +1199,7 @@ the tier-2 LLM ever runs. `slots=True` matters because the embedding worker
 holds tens of thousands of `Event` instances in memory at once.
 
 ### How it fits
-`wcfp/models.py` (codegen/01) defines `Event`, `Person`, `Organisation`,
+`cfp/models.py` (codegen/01) defines `Event`, `Person`, `Organisation`,
 and `Venue` as `@dataclass(slots=True)` with full type hints; `Optional[date]`
 appears on every deadline field; `field(default_factory=list)` is used for
 the `categories` and `raw_tags` fields.
@@ -1230,7 +1230,7 @@ inline `re.search(...)` by ~5× because compilation is cached only when the
 pattern fits in a small LRU.
 
 ### How it fits
-`_NON_LATIN_RE` in `wcfp/parsers/wikicfp.py` (codegen/04 lines 27–46) is
+`_NON_LATIN_RE` in `cfp/parsers/wikicfp.py` (codegen/04 lines 27–46) is
 compiled once and used by `_is_english()`, which counts non-Latin characters
 and returns `False` if more than 5% of the text is non-Latin. The same file
 uses `re.search(r"20[0-9]{2}", text)` for year extraction in date cells.
@@ -1261,9 +1261,9 @@ fallback (direct parse → fenced ```json``` extraction → outermost-brace
 scan) catches >95% of model output without re-prompting.
 
 ### How it fits
-`wcfp/parsers/ai_deadlines.py` calls `yaml.safe_load(resp.text)` to parse the
+`cfp/parsers/ai_deadlines.py` calls `yaml.safe_load(resp.text)` to parse the
 deadlines YAML — see codegen/04 line 277. The LLM JSON fallback chain lives
-in `wcfp/llm/utils.py` as `_parse_json_response()` and is invoked by every
+in `cfp/llm/utils.py` as `_parse_json_response()` and is invoked by every
 tier client.
 
 ### Further reading
@@ -1274,8 +1274,8 @@ The PyYAML documentation; the JSON spec (`json.org`).
 ## Module 27 — CLI Design with Python
 
 ### What it is
-**`python -m wcfp <command>`** runs the `wcfp` package as a script — Python
-imports `wcfp/__main__.py` (or, when present, the `cli.py` entry point).
+**`python -m cfp <command>`** runs the `cfp` package as a script — Python
+imports `cfp/__main__.py` (or, when present, the `cli.py` entry point).
 **argparse** is the stdlib CLI parser. **click** is a popular third-party
 alternative. **typer** is a modern wrapper that builds the CLI from
 type-hinted function signatures: `def run_pipeline(workers: int = 1)` becomes
@@ -1293,9 +1293,9 @@ type validation, and the same Python functions become both library calls
 and CLI entries.
 
 ### How it fits
-`wcfp/cli.py` (codegen/12) wires every command via typer; the `report`
+`cfp/cli.py` (codegen/12) wires every command via typer; the `report`
 subcommand uses Rich's `Table` with cell colouring (`red` if deadline < now,
-`orange` if < 7 days, `green` otherwise). `make run` invokes `python -m wcfp
+`orange` if < 7 days, `green` otherwise). `make run` invokes `python -m cfp
 run-pipeline`, relying on the `0` exit code to chain into `make sync`.
 
 ### Further reading
@@ -1308,8 +1308,8 @@ The typer documentation; *Click* docs by Armin Ronacher.
 ### What it is
 Python's **`logging`** module provides leveled output: `DEBUG`, `INFO`,
 `WARNING`, `ERROR`, `CRITICAL`. Each logger has a **name** (conventionally
-`__name__` of the module), forming a hierarchy: `wcfp.parsers.wikicfp`
-inherits from `wcfp.parsers` inherits from `wcfp` inherits from root.
+`__name__` of the module), forming a hierarchy: `cfp.parsers.wikicfp`
+inherits from `cfp.parsers` inherits from `cfp` inherits from root.
 **Structured logging** writes each event as a JSON object with named fields
 (`{"ts": "2026-04-26T12:00:00Z", "level": "INFO", "event": "scrape_ok",
 "url": "https://wikicfp.com/...", "duration_ms": 312}`), which downstream
@@ -1319,14 +1319,14 @@ aggregators (Loki, Cloud Logging) can index without regex.
 `print()` is fine for a script. For a long-running pipeline that writes to
 disk, fans out async tasks, and runs unattended overnight on a remote GPU,
 you need: severity levels (so you can silence DEBUG in production), per-
-module loggers (so you can crank `wcfp.fetch` to DEBUG without drowning in
+module loggers (so you can crank `cfp.fetch` to DEBUG without drowning in
 embedding logs), timestamps, and machine-parseable output. Free-text logs
 fall apart at scale.
 
 ### How it fits
 Every module starts with `logger = logging.getLogger(__name__)`. The pipeline's
 operational dashboard reads structured log lines built around a Redis hash
-`wcfp:metrics:tier{N}` that tracks `ok`, `escalated`, `failed` counters per
+`cfp:metrics:tier{N}` that tracks `ok`, `escalated`, `failed` counters per
 tier — see `arch.md §S8`. Fields like `tier`, `outcome`, `model_name` flow
 straight from the log to Grafana.
 
@@ -1356,8 +1356,8 @@ IAM identity, so rclone calls authenticate with no JSON key file mounted —
 the most common credential-leak vector vanishes.
 
 ### How it fits
-`wcfp/sync.py` (codegen/16) calls `rclone copy ./data/pg_backup/
-gcs:wcfp-data/prod/pg_backup/` after `pg_dump -F c -f latest.dump`. The
+`cfp/sync.py` (codegen/16) calls `rclone copy ./data/pg_backup/
+gcs:cfp-data/prod/pg_backup/` after `pg_dump -F c -f latest.dump`. The
 remote name comes from `RCLONE_REMOTE` in `config.py`; the bucket and prefix
 from `GCS_BUCKET` and `GCS_PREFIX`.
 
@@ -1459,7 +1459,7 @@ by design. This split keeps the working ontology fast and the
 collaborative ontology portable.
 
 ### How it fits
-`wcfp/ontology.py` (v2 scope) walks the `Concept`, `IS_A`, and `SYNONYM_OF`
+`cfp/ontology.py` (v2 scope) walks the `Concept`, `IS_A`, and `SYNONYM_OF`
 nodes/edges in the AGE graph via Cypher and uses `owlready2` to write
 `ontology/conference_domain.owl` — see `context.md §14`. The .owl file
 ships next to the repo for Protege users; the source of truth stays in
@@ -1528,9 +1528,9 @@ access internally so multiprocessing wouldn't help. Knowing this avoids
 "add threads, see no speedup" rabbit holes.
 
 ### How it fits
-`wcfp/fetch.py` opens an `aiohttp.ClientSession` and uses `asyncio.gather()`
+`cfp/fetch.py` opens an `aiohttp.ClientSession` and uses `asyncio.gather()`
 to fan out fetches against multiple domains concurrently; per-domain
-Gaussian delay still serialises within a domain. `wcfp/llm/tier{N}.py`
+Gaussian delay still serialises within a domain. `cfp/llm/tier{N}.py`
 calls Ollama sequentially. See `arch.md §S13` (async HTTP) and §S15
 (`--workers N` for orchestrator-level parallelism).
 
@@ -1563,11 +1563,11 @@ cheap to implement. Distinguishing fatal from retryable means we don't
 waste five attempts on a `410 Gone` URL.
 
 ### How it fits
-`wcfp/config.py` sets `MAX_RETRIES=5`, `RETRY_BACKOFF_BASE=2.0`,
-`RETRY_BACKOFF_CAP=600` (codegen/01 lines 79–81). `wcfp/fetch.py`'s
+`cfp/config.py` sets `MAX_RETRIES=5`, `RETRY_BACKOFF_BASE=2.0`,
+`RETRY_BACKOFF_CAP=600` (codegen/01 lines 79–81). `cfp/fetch.py`'s
 `with_retry` decorator catches `RetryableError`, sleeps
 `min(BASE**attempt + random.random(), CAP)`, and after `MAX_RETRIES`
-`RPUSH`es the job onto `wcfp:dead` for human inspection.
+`RPUSH`es the job onto `cfp:dead` for human inspection.
 
 ### Further reading
 The AWS Architecture Blog post "Exponential Backoff and Jitter" by Marc
@@ -1581,7 +1581,7 @@ Brooker; *Release It!* by Michael Nygard.
 |------|---------------------|
 | 12-Factor App | Methodology for cloud-native software; mandates config in env vars, statelessness, and disposability. |
 | AGE | Apache AGE — a PostgreSQL extension that adds property-graph storage and Cypher query support inside PG. |
-| aiohttp | Async HTTP client/server library for Python; the asyncio replacement for `requests` used in `wcfp/fetch.py`. |
+| aiohttp | Async HTTP client/server library for Python; the asyncio replacement for `requests` used in `cfp/fetch.py`. |
 | ANN | Approximate Nearest Neighbour — index-based vector search that trades 1-5% recall for 100× speed. |
 | AOF | Append-Only File — Redis persistence mode that logs every write to disk; replay rebuilds in-memory state on crash. |
 | async/await | Python keywords marking a coroutine and a yield point inside it; the syntactic basis of asyncio. |
@@ -1625,14 +1625,14 @@ Brooker; *Release It!* by Michael Nygard.
 | NavigableString | BeautifulSoup4 type representing a text leaf in the DOM tree; behaves like `str` but knows its parent tag. |
 | nomic-embed-text | Local-runnable 768-d embedding model from Nomic; runs on CPU or ~300 MB VRAM via Ollama. |
 | os.getenv | Python stdlib function reading an environment variable with a default fallback; the 12-Factor config primitive. |
-| OWL 2 | W3C Web Ontology Language standard; the format `wcfp/ontology.py` exports the AGE graph into for Protege. |
+| OWL 2 | W3C Web Ontology Language standard; the format `cfp/ontology.py` exports the AGE graph into for Protege. |
 | owlready2 | Python library for loading, manipulating, and writing OWL 2 ontology files. |
 | pgBouncer | Connection pooler in front of PostgreSQL; needed when many app pods exhaust PG's connection limit. |
 | pgvector | PostgreSQL extension adding a `vector` column type and ANN indexes (IVFFlat, HNSW). |
 | .PHONY | Makefile directive declaring a target as not-a-file, so `make` always runs its recipe even if a file of that name exists. |
 | Predatory conference | A conference that accepts papers with no peer review for a fee; pollutes search results if not filtered. |
 | Proceedings | The bound, citable record of papers accepted at a conference; published by IEEE/ACM/USENIX/Springer. |
-| Protege | Free Stanford GUI for browsing and editing OWL ontologies; consumes the .owl export from `wcfp/ontology.py`. |
+| Protege | Free Stanford GUI for browsing and editing OWL ontologies; consumes the .owl export from `cfp/ontology.py`. |
 | psycopg3 | The current-generation Python driver for PostgreSQL; supports async, binary protocol, and native jsonb. |
 | Quantisation | Compressing model weights to lower-bit representations (Q4, Q8) to fit smaller GPUs at some accuracy cost. |
 | rclone | A provider-agnostic CLI for cloud storage (GCS, S3, B2, etc.); used to push pg_dump and pull state. |
@@ -1650,7 +1650,7 @@ Brooker; *Release It!* by Michael Nygard.
 | Tier | One of the four LLM cascade levels (Tier 1=qwen3:4b, Tier 2=qwen3:14b, Tier 3=qwen3:32b, Tier 4=deepseek-r1:70b). |
 | Tool calling | LLM feature where the model emits a structured "call function X with args Y" message; used in Tier 3. |
 | TTL | Time To Live — a Redis key's expiry duration; underpins rate limiting, seen-URL dedup, and inflight leases. |
-| typer | Modern Python CLI library that builds the parser from type-hinted function signatures; used by `wcfp/cli.py`. |
+| typer | Modern Python CLI library that builds the parser from type-hinted function signatures; used by `cfp/cli.py`. |
 | Upsert | INSERT ... ON CONFLICT DO UPDATE — atomic insert-or-update that keeps scraping idempotent. |
 | WAL | Write-Ahead Log — PostgreSQL's durability mechanism; underlies replication and point-in-time recovery. |
 | WikiCFP | The community-edited CFP listing site at `www.wikicfp.com`; the pipeline's primary scrape source. |

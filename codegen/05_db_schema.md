@@ -1,14 +1,14 @@
-# Codegen 05 — wcfp/db.py
+# Codegen 05 — cfp/db.py
 
 ## File to Create
-- `wcfp/db.py`
+- `cfp/db.py`
 
 ## Imports
 ```python
 import psycopg          # psycopg3, NOT psycopg2
 from psycopg.rows import dict_row
 from config import PG_DSN, AGE_GRAPH
-from wcfp.models import Event, Person, Organisation, Venue, Series
+from cfp.models import Event, Person, Organisation, Venue, Series
 ```
 
 ---
@@ -46,7 +46,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 --   CREATE EXTENSION IF NOT EXISTS age;
 --   LOAD 'age';
 --   SET search_path = ag_catalog, "$user", public;
---   SELECT create_graph('wcfp_graph');
+--   SELECT create_graph('cfp_graph');
 ```
 
 ### Full DDL (implement exactly)
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS series (
     series_id   INTEGER PRIMARY KEY,
     acronym     VARCHAR NOT NULL,
     full_name   VARCHAR,
-    wikicfp_url VARCHAR,
+    origin_url VARCHAR,
     org_id      INTEGER REFERENCES organisations(org_id)
 );
 
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS scrape_sessions (
     session_id     VARCHAR PRIMARY KEY,    -- e.g. "2026-04-26T03:00Z-gpu_mid-abc123"
     started_at     TIMESTAMPTZ DEFAULT NOW(),
     finished_at    TIMESTAMPTZ,
-    machine        VARCHAR,                 -- WCFP_MACHINE profile name
+    machine        VARCHAR,                 -- CFP_MACHINE profile name
     git_sha        VARCHAR,                 -- commit hash of the runner
     prompts_md_sha VARCHAR,                 -- sha1(prompts.md) — pin prompt version
     notes          TEXT
@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS events (
     region             VARCHAR,
     india_state        VARCHAR,
     venue_id           INTEGER REFERENCES venues(venue_id),
-    wikicfp_url        VARCHAR,
+    origin_url        VARCHAR,
     official_url       VARCHAR,
     submission_system  VARCHAR,                -- EasyChair/EDAS/HotCRP/CMT/OpenReview link
     sponsor_names      VARCHAR[],              -- IEEE/ACM/Springer/etc. sponsor tags
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS sites (
     last_scraped  TIMESTAMPTZ,
     robots_txt    VARCHAR,
     crawl_delay_s INTEGER DEFAULT 5,
-    last_cursor   VARCHAR                    -- mirror of wcfp:cursor:{source} (Q11)
+    last_cursor   VARCHAR                    -- mirror of cfp:cursor:{source} (Q11)
 );
 
 CREATE TABLE IF NOT EXISTS tier_runs (
@@ -232,7 +232,7 @@ The COALESCE policy:
 - **Direct overwrite (always update from latest scrape)**:
   `acronym`, `name`, `edition_year`, `categories`, `is_workshop`, `is_virtual`,
   `when_raw`, `start_date`, `end_date`, `abstract_deadline`, `paper_deadline`,
-  `where_raw`, `country`, `region`, `india_state`, `wikicfp_url`,
+  `where_raw`, `country`, `region`, `india_state`, `origin_url`,
   `raw_tags`, `quality_flags`, `quality_severity`, `scrape_session_id`,
   `last_checked`.
   These reflect the latest authoritative state — paper_deadline in particular
@@ -258,7 +258,7 @@ def upsert_event(conn, event: Event) -> None:
                 start_date, end_date, abstract_deadline, paper_deadline,
                 notification, camera_ready,
                 where_raw, country, region, india_state,
-                wikicfp_url, official_url, submission_system, sponsor_names,
+                origin_url, official_url, submission_system, sponsor_names,
                 raw_tags, description, source,
                 quality_flags, quality_severity, scrape_session_id,
                 scraped_at, last_checked
@@ -268,7 +268,7 @@ def upsert_event(conn, event: Event) -> None:
                 %(start_date)s, %(end_date)s, %(abstract_deadline)s, %(paper_deadline)s,
                 %(notification)s, %(camera_ready)s,
                 %(where_raw)s, %(country)s, %(region)s, %(india_state)s,
-                %(wikicfp_url)s, %(official_url)s, %(submission_system)s, %(sponsor_names)s,
+                %(origin_url)s, %(official_url)s, %(submission_system)s, %(sponsor_names)s,
                 %(raw_tags)s, %(description)s, %(source)s,
                 %(quality_flags)s, %(quality_severity)s, %(scrape_session_id)s,
                 NOW(), NOW()
@@ -289,7 +289,7 @@ def upsert_event(conn, event: Event) -> None:
                 country           = EXCLUDED.country,
                 region            = EXCLUDED.region,
                 india_state       = EXCLUDED.india_state,
-                wikicfp_url       = EXCLUDED.wikicfp_url,
+                origin_url       = EXCLUDED.origin_url,
                 official_url      = COALESCE(EXCLUDED.official_url,      events.official_url),
                 notification      = COALESCE(EXCLUDED.notification,      events.notification),
                 camera_ready      = COALESCE(EXCLUDED.camera_ready,      events.camera_ready),

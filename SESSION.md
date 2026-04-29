@@ -1,7 +1,7 @@
 # Session State — CFP Conference Knowledge Pipeline
 
 > Read this at the start of every new session for full context in ~2 minutes.
-> Last updated: 2026-04-26
+> Last updated: 2026-04-29
 
 ---
 
@@ -39,7 +39,7 @@ All persistent data lives in GCS. Local state is always ephemeral.
 | Qwen3 32b + DeepSeek-R1 | — | ✅ | Tiers 3–4: tool-calling + batch reasoning |
 | nomic-embed-text | ✅ | ✅ | 768-d embeddings → pgvector |
 | GCS (rclone) | ✅ | ✅ | Off-machine persistence: pg_dump + reports |
-| Single machine | ✅ | ✅ | Any machine with Docker + Ollama. WCFP_MACHINE profile controls tiers. |
+| Single machine | ✅ | ✅ | Any machine with Docker + Ollama. CFP_MACHINE profile controls tiers. |
 
 Machine lifecycle: **pull from GCS → restore → run → sync to GCS → full local wipe.**
 
@@ -49,7 +49,7 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 
 ## Hardware Profiles
 
-| `WCFP_MACHINE` | Min VRAM | Tiers / Models |
+| `CFP_MACHINE` | Min VRAM | Tiers / Models |
 |---|---|---|
 | `dgx` | 80 GB | All tiers + deepseek-r1:70b for Tier 4 |
 | `gpu_large` | 24 GB | Tiers 1–4 (qwen3:4b + qwen3:14b + qwen3:32b + deepseek-r1:32b) |
@@ -89,30 +89,30 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | File | Covers | Last reviewed |
 |---|---|---|
 | `codegen/00_HOWTO.md` | How to use the codegen files | — |
-| `codegen/01_config_models.md` | `config.py` + `wcfp/models.py` | 2026-04-26 (gap audit: OLLAMA_HOST single, paper_deadline, is_workshop, sponsor_names, scrape_session_id, PersonRole.ORGANIZER/OTHER, OrgType.OTHER) |
-| `codegen/04_wikicfp_parser.md` | `wcfp/parsers/` | 2026-04-26 (patched: `paper_deadline=` throughout; `_parse_deadline_cell` correct) |
-| `codegen/05_db_schema.md` | `wcfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, scrape_sessions table, sites.last_cursor) |
-| `codegen/09_llm_client.md` | `wcfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: single OLLAMA_HOST, get_available_models, profile_intersection) |
-| `codegen/11_analytics_generate.md` | `wcfp/analytics.py` + `generate_md.py` | 2026-04-26 (patched: `paper_deadline::VARCHAR` in SQL; all deadline refs updated) |
+| `codegen/01_config_models.md` | `config.py` + `cfp/models.py` | 2026-04-26 (gap audit: OLLAMA_HOST single, paper_deadline, is_workshop, sponsor_names, scrape_session_id, PersonRole.ORGANIZER/OTHER, OrgType.OTHER) |
+| `codegen/04_wikicfp_parser.md` | `cfp/parsers/` | 2026-04-26 (patched: `paper_deadline=` throughout; `_parse_deadline_cell` correct) |
+| `codegen/05_db_schema.md` | `cfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, scrape_sessions table, sites.last_cursor) |
+| `codegen/09_llm_client.md` | `cfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: single OLLAMA_HOST, get_available_models, profile_intersection) |
+| `codegen/11_analytics_generate.md` | `cfp/analytics.py` + `generate_md.py` | 2026-04-26 (patched: `paper_deadline::VARCHAR` in SQL; all deadline refs updated) |
 
 ### Codegen specs — NOT YET WRITTEN
 | Spec | Module |
 |---|---|
-| `codegen/02` | `wcfp/prompts_parser.py` |
-| `codegen/03` | `wcfp/fetch.py` |
-| `codegen/06` | `wcfp/graph.py` (Apache AGE) |
-| `codegen/07` | `wcfp/queue.py` (Redis) |
-| `codegen/08` | `wcfp/vectors.py` + `wcfp/embed.py` |
-| `codegen/10` | `wcfp/llm/tier1..4.py` |
-| `codegen/12` | `wcfp/pipeline.py` + `wcfp/cli.py` |
+| `codegen/02` | `cfp/prompts_parser.py` |
+| `codegen/03` | `cfp/fetch.py` |
+| `codegen/06` | `cfp/graph.py` (Apache AGE) |
+| `codegen/07` | `cfp/queue.py` (Redis) |
+| `codegen/08` | `cfp/vectors.py` + `cfp/embed.py` |
+| `codegen/10` | `cfp/llm/tier1..4.py` |
+| `codegen/12` | `cfp/pipeline.py` + `cfp/cli.py` |
 | `codegen/13` | `setup.sh` + `docker-compose.yml` + `Makefile` |
 | `codegen/14` | `AGENTS.md` + `PATTERNS.md` |
-| `codegen/15` | `wcfp/dedup.py` |
-| `codegen/16` | `wcfp/sync.py` |
-| `codegen/17` | `wcfp/ontology.py` |
+| `codegen/15` | `cfp/dedup.py` |
+| `codegen/16` | `cfp/sync.py` |
+| `codegen/17` | `cfp/ontology.py` |
 
 ### Implementation — NOT YET STARTED
-`wcfp/` package does not exist. All modules are unimplemented.
+`cfp/` package does not exist. All modules are unimplemented.
 
 ---
 
@@ -120,12 +120,12 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 
 | Question | Blocks | Status |
 |---|---|---|
-| Q4 — AGE consistency (derived tables vs authoritative) | `wcfp/graph.py` | open (v2) |
-| Q6 — Cross-source dedup trigger timing | `wcfp/dedup.py` | open (v2 needs LLM confirmation; v1 uses pgvector-only) |
+| Q4 — AGE consistency (derived tables vs authoritative) | `cfp/graph.py` | open (v2) |
+| Q6 — Cross-source dedup trigger timing | `cfp/dedup.py` | open (v2 needs LLM confirmation; v1 uses pgvector-only) |
 | Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` | open |
-| Q12 — JSON-mode failure retry budget | `wcfp/llm/client.py` | open |
-| Q14 — Quantisation policy per WCFP_MACHINE profile | `config.py` | open |
-| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `wcfp/models.py`, `wcfp/graph.py` | ✅ **RESOLVED 2026-04-26** — `is_workshop` flag on Event; `Workshop` graph node dropped from v1 (context.md §5 updated) |
+| Q12 — JSON-mode failure retry budget | `cfp/llm/client.py` | open |
+| Q14 — Quantisation policy per CFP_MACHINE profile | `config.py` | open |
+| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `cfp/models.py`, `cfp/graph.py` | ✅ **RESOLVED 2026-04-26** — `is_workshop` flag on Event; `Workshop` graph node dropped from v1 (context.md §5 updated) |
 
 Full question details + recommended answers: `arch.md §1`
 
@@ -135,22 +135,22 @@ Full question details + recommended answers: `arch.md §1`
 
 > Full detail in `memory/project_cfp.md`. Summary here for quick reference.
 
-### P0 — Blockers (resolve before any code)
-- [ ] **Q10** — Ollama model storage: named Docker volume vs re-pull → blocks `docker-compose.yml`
-- [ ] **Q12** — JSON-mode failure retry budget → blocks `wcfp/llm/client.py`
-- [ ] **Q14** — Quantisation policy per PROFILE_MODELS → blocks `config.py` values
-Full answers + recommendations: `arch.md §1`
+### P0 — Blockers ✅ ALL RESOLVED (2026-04-29)
+- [x] **Q10** — Ollama named volume `ollama_models:/root/.ollama` added to `docker-compose.yml`
+- [x] **Q12** — JSON repair → 1 retry → escalate; `JSON_RETRY_SAME_TIER=1` in `config.py`
+- [x] **Q14** — Quant tags pinned in `PROFILE_MODELS` (q4_K_M default, q8_0 on dgx)
+Full answers: `arch.md §1`
 
 ### P1 — Write missing v1 codegen specs
-- [ ] `codegen/02` — `wcfp/prompts_parser.py`
-- [ ] `codegen/03` — `wcfp/fetch.py` (aiohttp, not requests — arch.md S13)
-- [ ] `codegen/07` — `wcfp/queue.py` (Redis)
-- [ ] `codegen/08` — `wcfp/vectors.py` + `wcfp/embed.py`
+- [ ] `codegen/02` — `cfp/prompts_parser.py`
+- [ ] `codegen/03` — `cfp/fetch.py` (aiohttp, not requests — arch.md S13)
+- [ ] `codegen/07` — `cfp/queue.py` (Redis)
+- [ ] `codegen/08` — `cfp/vectors.py` + `cfp/embed.py`
 - [ ] `codegen/13` — `docker-compose.yml` (`pgvector/pgvector:pg16`) + `Makefile`
-- [ ] `codegen/15` — `wcfp/dedup.py` (pgvector-only for v1)
-- [ ] `codegen/16` — `wcfp/sync.py` (GCS pull/push)
-- [ ] `codegen/10` — `wcfp/llm/tier1.py` + `tier2.py`
-- [ ] `codegen/12` — `wcfp/pipeline.py` + `wcfp/cli.py`
+- [ ] `codegen/15` — `cfp/dedup.py` (pgvector-only for v1)
+- [ ] `codegen/16` — `cfp/sync.py` (GCS pull/push)
+- [ ] `codegen/10` — `cfp/llm/tier1.py` + `tier2.py`
+- [ ] `codegen/12` — `cfp/pipeline.py` + `cfp/cli.py`
 
 ### P2 — Patch stale written specs ✅ COMPLETE
 - [x] Spec 04: `paper_deadline=` throughout — done 2026-04-26
@@ -162,20 +162,20 @@ Full answers + recommendations: `arch.md §1`
 
 ### P4 — Implement v1 (strict dependency order)
 ```
-spec 01  config.py + wcfp/models.py          ← START HERE
-spec 02  wcfp/prompts_parser.py
-spec 03  wcfp/fetch.py
-spec 04  wcfp/parsers/wikicfp.py + ai_deadlines.py
-spec 05  wcfp/db.py
-spec 07  wcfp/queue.py
-spec 08  wcfp/vectors.py + wcfp/embed.py
-spec 09  wcfp/llm/client.py + tools.py
-spec 10  wcfp/llm/tier1.py + tier2.py
-spec 15  wcfp/dedup.py
-spec 16  wcfp/sync.py
-spec 12  wcfp/pipeline.py + wcfp/cli.py
+spec 01  config.py + cfp/models.py          ← START HERE
+spec 02  cfp/prompts_parser.py
+spec 03  cfp/fetch.py
+spec 04  cfp/parsers/wikicfp.py + ai_deadlines.py
+spec 05  cfp/db.py
+spec 07  cfp/queue.py
+spec 08  cfp/vectors.py + cfp/embed.py
+spec 09  cfp/llm/client.py + tools.py
+spec 10  cfp/llm/tier1.py + tier2.py
+spec 15  cfp/dedup.py
+spec 16  cfp/sync.py
+spec 12  cfp/pipeline.py + cfp/cli.py
 spec 13  docker-compose.yml + Makefile
-spec 11  wcfp/analytics.py + generate_md.py
+spec 11  cfp/analytics.py + generate_md.py
          → Delete scraper.py after parsers/wikicfp.py verified
 ```
 
@@ -185,16 +185,16 @@ spec 11  wcfp/analytics.py + generate_md.py
 - [ ] `tests/` directory with pytest fixtures from real WikiCFP HTML
 
 ### P6 — Enhancements (post-v1)
-- [ ] Gmail integration (`wcfp/parsers/email_gmail.py`)
+- [ ] Gmail integration (`cfp/parsers/email_gmail.py`)
 - [ ] EDAS / EasyChair / OpenReview / HotCRP parsers
 - [ ] Health check FastAPI endpoint
 - [ ] Predatory publisher blocklist
 - [ ] Prometheus + Grafana observability
 
 ### P7 — v2 (additive migration, no rewrites)
-- [ ] Switch Docker image → `apache/age:PG16_latest`, implement `wcfp/graph.py`
+- [ ] Switch Docker image → `apache/age:PG16_latest`, implement `cfp/graph.py`
 - [ ] Tier 3 + 4, DeepSeek-R1 dedup confirmation
-- [ ] DuckDB analytics layer, ontology pipeline (`wcfp/ontology.py`)
+- [ ] DuckDB analytics layer, ontology pipeline (`cfp/ontology.py`)
 - [ ] Kubernetes manifests (`arch.md §5` — ~$85/mo on GKE)
 
 ---
@@ -206,12 +206,12 @@ spec 11  wcfp/analytics.py + generate_md.py
 3. DuckDB is read-only analytics — never writes to disk
 4. Redis stores zero business data
 5. Tool calling: Qwen3 ONLY. DeepSeek-R1 = pure reasoning, no tools
-6. WikiCFP paired-row parsing in `scraper.py` is CORRECT — copy verbatim to `wcfp/parsers/wikicfp.py`
+6. WikiCFP paired-row parsing in `scraper.py` is CORRECT — copy verbatim to `cfp/parsers/wikicfp.py`
 7. India state-wise location taxonomy in `generate_md.py` is CORRECT — copy verbatim
 8. COALESCE upsert: never overwrite notification, camera_ready, rank, notes, submission_system, sponsor_names, official_url, description with NULL. **Always overwrite** (direct update): paper_deadline, abstract_deadline, dates, location, quality_flags, quality_severity, scrape_session_id
 9. Crawl delays: min 5s, Gaussian(8, 2.5), 10% chance 15–45s pause
 10. **Canonical field name is `paper_deadline`** — not `deadline`. Used uniformly across `models.Event`, `events.paper_deadline` column, prompts.md, parsers, Markdown output. The legacy name `deadline` must not appear in new code.
-11. **Single Ollama daemon per machine** at `OLLAMA_HOST` — no per-model host routing. Tier escalation handles model availability via `PROFILE_MODELS[WCFP_MACHINE]`.
+11. **Single Ollama daemon per machine** at `OLLAMA_HOST` — no per-model host routing. Tier escalation handles model availability via `PROFILE_MODELS[CFP_MACHINE]`.
 
 ---
 
@@ -219,17 +219,17 @@ spec 11  wcfp/analytics.py + generate_md.py
 
 | Pattern | Destination |
 |---|---|
-| `_is_english()` filter | `wcfp/parsers/wikicfp.py` |
-| `_safe_parse_date()` dateutil fuzzy | `wcfp/parsers/wikicfp.py` |
-| Abstract + paper deadline regex | `wcfp/parsers/wikicfp.py` |
-| COALESCE upsert | `wcfp/db.py` |
-| `_parse_json_response()` 3-level fallback | `wcfp/llm/client.py` |
-| `_strip_thinking()` | `wcfp/llm/client.py` |
-| `slug` + `days_to_deadline` properties | `wcfp/models.py` |
-| `to_markdown()` | `wcfp/models.py` |
+| `_is_english()` filter | `cfp/parsers/wikicfp.py` |
+| `_safe_parse_date()` dateutil fuzzy | `cfp/parsers/wikicfp.py` |
+| Abstract + paper deadline regex | `cfp/parsers/wikicfp.py` |
+| COALESCE upsert | `cfp/db.py` |
+| `_parse_json_response()` 3-level fallback | `cfp/llm/client.py` |
+| `_strip_thinking()` | `cfp/llm/client.py` |
+| `slug` + `days_to_deadline` properties | `cfp/models.py` |
+| `to_markdown()` | `cfp/models.py` |
 | `## Notes` preservation | `generate_md.py` |
-| `scrape_ai_deadlines()` YAML | `wcfp/parsers/ai_deadlines.py` |
-| Rich CLI deadline coloring | `wcfp/cli.py` |
+| `scrape_ai_deadlines()` YAML | `cfp/parsers/ai_deadlines.py` |
+| Rich CLI deadline coloring | `cfp/cli.py` |
 | PATTERNS.md deadline statistics | `PATTERNS.md` |
 
 ---

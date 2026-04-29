@@ -24,7 +24,7 @@ type: reference
 | `memory/project_cfp.md` | Priority to-do list (this session's primary reference) |
 
 ## External systems
-- **GCS bucket:** `wcfp-data` (env: `GCS_BUCKET`)
+- **GCS bucket:** `cfp-data` (env: `GCS_BUCKET`)
 - **GCS prefix:** `prod` (env: `GCS_PREFIX`)
 - **rclone remote name:** `gcs` (env: `RCLONE_REMOTE`)
 - **Ollama:** `http://localhost:11434` (single local daemon, env: `OLLAMA_HOST`)
@@ -40,4 +40,4 @@ type: reference
 | EasyChair | CFP listings | easychair.org/cfp/ |
 | CORE rankings | Quality reference | portal.core.edu.au |
 | Semantic Scholar | Discovery | API (URL in prompts.md) |
-| Gmail | Email CFPs | Planned — `wcfp/parsers/email_gmail.py` (not yet implemented) |
+| Gmail | Email CFPs | Planned — `cfp/parsers/email_gmail.py` (not yet implemented) |

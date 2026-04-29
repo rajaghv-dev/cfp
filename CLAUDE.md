@@ -52,12 +52,12 @@ Every session MUST begin with:
 - Never use Haiku for this project
 
 ## Implementation Rules (never violate)
-- Do NOT write any code in `wcfp/` until the relevant arch.md §1 question is RESOLVED
+- Do NOT write any code in `cfp/` until the relevant arch.md §1 question is RESOLVED
 - All PostgreSQL writes: `psycopg` (psycopg3) only — never psycopg2, never DuckDB
 - DuckDB: read-only analytics layer only — never writes
 - Redis: operational data only — zero business data
 - Tool calling: Qwen3 models only — DeepSeek-R1 has no tool calling
-- Import style: absolute imports (`from wcfp.models import Event`)
+- Import style: absolute imports (`from cfp.models import Event`)
 - Implement in dependency order: see `codegen/00_HOWTO.md`
 
 ## File Ownership Rules

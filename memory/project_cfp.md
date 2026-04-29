@@ -6,7 +6,7 @@ type: project
 
 ## Phase
 **Documentation and architecture complete. Pre-implementation.**
-v1 scope defined in `arch.md §6`. Nothing in `wcfp/` exists yet.
+v1 scope defined in `arch.md §6`. Nothing in `cfp/` exists yet.
 
 ## File Inventory (2026-04-26)
 
@@ -34,11 +34,11 @@ v1 scope defined in `arch.md §6`. Nothing in `wcfp/` exists yet.
 ### Codegen specs — written and reviewed (all reviewed 2026-04-26)
 | File | Covers | Status |
 |---|---|---|
-| `codegen/01` | `config.py` + `wcfp/models.py` | ✅ Clean |
-| `codegen/04` | `wcfp/parsers/` | ✅ Patched — `paper_deadline=` throughout |
-| `codegen/05` | `wcfp/db.py` | ✅ Clean — all new columns, scrape_sessions table |
-| `codegen/09` | `wcfp/llm/client.py` + `tools.py` | ✅ Clean — single OLLAMA_HOST |
-| `codegen/11` | `wcfp/analytics.py` + `generate_md.py` | ✅ Patched — `paper_deadline::VARCHAR` in SQL |
+| `codegen/01` | `config.py` + `cfp/models.py` | ✅ Clean |
+| `codegen/04` | `cfp/parsers/` | ✅ Patched — `paper_deadline=` throughout |
+| `codegen/05` | `cfp/db.py` | ✅ Clean — all new columns, scrape_sessions table |
+| `codegen/09` | `cfp/llm/client.py` + `tools.py` | ✅ Clean — single OLLAMA_HOST |
+| `codegen/11` | `cfp/analytics.py` + `generate_md.py` | ✅ Patched — `paper_deadline::VARCHAR` in SQL |
 
 ### Codegen specs — NOT written yet
 `02` (prompts_parser) · `03` (fetch.py) · `07` (queue.py) · `08` (vectors+embed) ·
@@ -55,7 +55,7 @@ These 3 open questions hit v1 modules directly. Answers + recommendations are in
 | # | Question | Blocks |
 |---|---|---|
 | Q10 | Ollama model storage: named Docker volume vs re-pull each session | `docker-compose.yml`, `setup.sh` |
-| Q12 | JSON-mode failure: retry budget and escalation path | `wcfp/llm/client.py` |
+| Q12 | JSON-mode failure: retry budget and escalation path | `cfp/llm/client.py` |
 | Q14 | Quantisation policy: pin quant tags per `PROFILE_MODELS` entry | `config.py` |
 
 ---
@@ -63,15 +63,15 @@ These 3 open questions hit v1 modules directly. Answers + recommendations are in
 ### P1 — Write missing v1 codegen specs
 In order (each may depend on the previous):
 
-- [ ] `codegen/02` — `wcfp/prompts_parser.py`
-- [ ] `codegen/03` — `wcfp/fetch.py` (use aiohttp per arch.md S13, not requests)
-- [ ] `codegen/07` — `wcfp/queue.py` (Redis — sorted set, SETNX, inflight lease)
-- [ ] `codegen/08` — `wcfp/vectors.py` + `wcfp/embed.py` (pgvector + nomic-embed-text)
+- [ ] `codegen/02` — `cfp/prompts_parser.py`
+- [ ] `codegen/03` — `cfp/fetch.py` (use aiohttp per arch.md S13, not requests)
+- [ ] `codegen/07` — `cfp/queue.py` (Redis — sorted set, SETNX, inflight lease)
+- [ ] `codegen/08` — `cfp/vectors.py` + `cfp/embed.py` (pgvector + nomic-embed-text)
 - [ ] `codegen/13` — `docker-compose.yml` (pgvector/pgvector:pg16 image, NOT apache/age) + `Makefile` with full lifecycle targets
-- [ ] `codegen/15` — `wcfp/dedup.py` (pgvector-only for v1; LLM confirmation is v2)
-- [ ] `codegen/16` — `wcfp/sync.py` (GCS pull/push via rclone + pg_dump/restore)
-- [ ] `codegen/10` — `wcfp/llm/tier1.py` + `tier2.py` (v1 tiers only)
-- [ ] `codegen/12` — `wcfp/pipeline.py` + `wcfp/cli.py`
+- [ ] `codegen/15` — `cfp/dedup.py` (pgvector-only for v1; LLM confirmation is v2)
+- [ ] `codegen/16` — `cfp/sync.py` (GCS pull/push via rclone + pg_dump/restore)
+- [ ] `codegen/10` — `cfp/llm/tier1.py` + `tier2.py` (v1 tiers only)
+- [ ] `codegen/12` — `cfp/pipeline.py` + `cfp/cli.py`
 
 ---
 
@@ -88,21 +88,21 @@ In order (each may depend on the previous):
 ---
 
 ### P4 — Implement v1 (in strict dependency order)
-- [ ] `config.py` + `wcfp/models.py` ← spec 01
-- [ ] `wcfp/prompts_parser.py` ← spec 02
-- [ ] `wcfp/fetch.py` ← spec 03
-- [ ] `wcfp/parsers/wikicfp.py` + `ai_deadlines.py` ← spec 04
-- [ ] `wcfp/db.py` ← spec 05
-- [ ] `wcfp/queue.py` ← spec 07
-- [ ] `wcfp/vectors.py` + `wcfp/embed.py` ← spec 08
-- [ ] `wcfp/llm/client.py` + `tools.py` ← spec 09
-- [ ] `wcfp/llm/tier1.py` + `tier2.py` ← spec 10
-- [ ] `wcfp/dedup.py` ← spec 15
-- [ ] `wcfp/sync.py` ← spec 16
-- [ ] `wcfp/pipeline.py` + `wcfp/cli.py` ← spec 12
+- [ ] `config.py` + `cfp/models.py` ← spec 01
+- [ ] `cfp/prompts_parser.py` ← spec 02
+- [ ] `cfp/fetch.py` ← spec 03
+- [ ] `cfp/parsers/wikicfp.py` + `ai_deadlines.py` ← spec 04
+- [ ] `cfp/db.py` ← spec 05
+- [ ] `cfp/queue.py` ← spec 07
+- [ ] `cfp/vectors.py` + `cfp/embed.py` ← spec 08
+- [ ] `cfp/llm/client.py` + `tools.py` ← spec 09
+- [ ] `cfp/llm/tier1.py` + `tier2.py` ← spec 10
+- [ ] `cfp/dedup.py` ← spec 15
+- [ ] `cfp/sync.py` ← spec 16
+- [ ] `cfp/pipeline.py` + `cfp/cli.py` ← spec 12
 - [ ] `docker-compose.yml` + `Makefile` ← spec 13
-- [ ] `wcfp/analytics.py` + `generate_md.py` ← spec 11
-- [ ] **Delete `scraper.py`** after `wcfp/parsers/wikicfp.py` verified working
+- [ ] `cfp/analytics.py` + `generate_md.py` ← spec 11
+- [ ] **Delete `scraper.py`** after `cfp/parsers/wikicfp.py` verified working
 
 ---
 
@@ -114,7 +114,7 @@ In order (each may depend on the previous):
 ---
 
 ### P6 — Post-v1 enhancements (after real data validates v1)
-- [ ] Gmail integration — `wcfp/parsers/email_gmail.py` (Gmail API OAuth2)
+- [ ] Gmail integration — `cfp/parsers/email_gmail.py` (Gmail API OAuth2)
 - [ ] EDAS / EasyChair / OpenReview / HotCRP parsers
 - [ ] Health check FastAPI endpoint (`/healthz`, queue depth, tier metrics)
 - [ ] Predatory publisher blocklist (domain blocklist checked before enqueue)
@@ -124,9 +124,9 @@ In order (each may depend on the previous):
 
 ### P7 — v2 scope (additive migration, no rewrites)
 - [ ] Switch Docker image: `pgvector/pgvector:pg16` → `apache/age:PG16_latest`
-- [ ] Implement `wcfp/graph.py` (Apache AGE sync, Cypher helper) ← spec 06
-- [ ] Implement `wcfp/llm/tier3.py` + `tier4.py` (qwen3:32b tool-calling, deepseek-r1 batch)
-- [ ] DeepSeek-R1 dedup confirmation (upgrade `wcfp/dedup.py`)
+- [ ] Implement `cfp/graph.py` (Apache AGE sync, Cypher helper) ← spec 06
+- [ ] Implement `cfp/llm/tier3.py` + `tier4.py` (qwen3:32b tool-calling, deepseek-r1 batch)
+- [ ] DeepSeek-R1 dedup confirmation (upgrade `cfp/dedup.py`)
 - [ ] Replace direct PG queries in `analytics.py` with DuckDB postgres_scanner
-- [ ] Implement `wcfp/ontology.py` (AGE → owlready2 → .owl export) ← spec 17
+- [ ] Implement `cfp/ontology.py` (AGE → owlready2 → .owl export) ← spec 17
 - [ ] Kubernetes manifests (see `arch.md §5` for full spec — ~$85/mo on GKE)

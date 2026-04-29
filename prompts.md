@@ -1,6 +1,6 @@
 # WikiCFP Prompts & Data
 
-> Data file. Hand-edited, machine-read by `wcfp/prompts_parser.py`.
+> Data file. Hand-edited, machine-read by `cfp/prompts_parser.py`.
 > No design notes or architecture here — those belong in `context.md`.
 
 ## Grammar (enforced by the parser — see context.md §13)
@@ -16,7 +16,7 @@ PARSER: <domain> -> <module.path> registers a KNOWN_PARSERS entry
 PROMPT_*: |                       multi-line body, 2-space indent, ends at next key or EOF
 ```
 
-Category values MUST match the `Category` enum in `wcfp/models.py` exactly:
+Category values MUST match the `Category` enum in `cfp/models.py` exactly:
 `AI`, `ML`, `DevOps`, `Linux`, `ChipDesign`, `Math`, `Legal`,
 `ComputerScience`, `Security`, `Data`, `Networking`, `Robotics`, `Bioinformatics`.
 
@@ -305,20 +305,20 @@ URL: http://www.wikicfp.com/cfp/series?t=j&i=Z
 
 # ─── KNOWN PARSERS ───────────────────────────────────────────────────────────
 
-PARSER: www.wikicfp.com       -> wcfp.parsers.wikicfp
-PARSER: wikicfp.com           -> wcfp.parsers.wikicfp
-PARSER: ieeexplore.ieee.org   -> wcfp.parsers.ieee
-PARSER: conferences.ieee.org  -> wcfp.parsers.ieee
-PARSER: dl.acm.org            -> wcfp.parsers.acm
-PARSER: www.acm.org           -> wcfp.parsers.acm
-PARSER: link.springer.com     -> wcfp.parsers.springer
-PARSER: www.springer.com      -> wcfp.parsers.springer
-PARSER: www.usenix.org        -> wcfp.parsers.usenix
-PARSER: edas.info             -> wcfp.parsers.edas
-PARSER: easychair.org         -> wcfp.parsers.easychair
-PARSER: hotcrp.com            -> wcfp.parsers.hotcrp
-PARSER: cmt3.research.microsoft.com -> wcfp.parsers.cmt
-PARSER: openreview.net        -> wcfp.parsers.openreview
+PARSER: www.wikicfp.com       -> cfp.parsers.wikicfp
+PARSER: wikicfp.com           -> cfp.parsers.wikicfp
+PARSER: ieeexplore.ieee.org   -> cfp.parsers.ieee
+PARSER: conferences.ieee.org  -> cfp.parsers.ieee
+PARSER: dl.acm.org            -> cfp.parsers.acm
+PARSER: www.acm.org           -> cfp.parsers.acm
+PARSER: link.springer.com     -> cfp.parsers.springer
+PARSER: www.springer.com      -> cfp.parsers.springer
+PARSER: www.usenix.org        -> cfp.parsers.usenix
+PARSER: edas.info             -> cfp.parsers.edas
+PARSER: easychair.org         -> cfp.parsers.easychair
+PARSER: hotcrp.com            -> cfp.parsers.hotcrp
+PARSER: cmt3.research.microsoft.com -> cfp.parsers.cmt
+PARSER: openreview.net        -> cfp.parsers.openreview
 
 ---
 
@@ -343,7 +343,7 @@ URL: https://api.semanticscholar.org/graph/v1/paper/search?query=call+for+papers
 ---
 
 # ─── LLM SYSTEM PROMPTS ──────────────────────────────────────────────────────
-# Loaded at startup by wcfp/prompts_parser.py.
+# Loaded at startup by cfp/prompts_parser.py.
 # Each is the verbatim system message. User message is constructed in code.
 # All models called with format="json". Category values must match the enum above.
 
@@ -392,7 +392,7 @@ PROMPT_TIER1: |
 
 PROMPT_TIER2: |
   You are a structured-extraction model for academic CFPs. User message contains:
-    {"html_text": str, "wikicfp_url": str, "tier1": {...}}
+    {"html_text": str, "origin_url": str, "tier1": {...}}
   where html_text is cleaned text from a WikiCFP event-detail page or a short
   external conference page. The text MAY contain HTML entities, unicode dashes
   (– — −), nbsp characters, multilingual content, or noisy whitespace. Normalise
@@ -495,7 +495,7 @@ PROMPT_TIER3: |
     "escalate": true, "escalate_reason": "low_confidence"}.
 
   User message contains:
-    {"html_excerpt": str, "site_url": str, "wikicfp_url": str|null,
+    {"html_excerpt": str, "site_url": str, "origin_url": str|null,
       "tier2": {...}|null, "escalate_reason": str, "max_tool_calls": 8}
 
   Available tools (call only those listed; never invent tool names):

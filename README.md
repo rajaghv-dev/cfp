@@ -27,21 +27,21 @@ data loss.
 ```bash
 git clone https://github.com/rajaghv-dev/cfp.git
 cd cfp
-WCFP_MACHINE=gpu_large GCS_BUCKET=wcfp-data bash setup.sh
+CFP_MACHINE=gpu_large GCS_BUCKET=cfp-data bash setup.sh
 source .venv/bin/activate
 
 # v1 (current): standalone scraper still works
 python3 scraper.py
 
-# v1 (after wcfp/ package lands)
-python -m wcfp init-db
-python -m wcfp enqueue-seeds
-python -m wcfp run-pipeline
-python -m wcfp generate-reports
+# v1 (after cfp/ package lands)
+python -m cfp init-db
+python -m cfp enqueue-seeds
+python -m cfp run-pipeline
+python -m cfp generate-reports
 ```
 
 `setup.sh` provisions venv + pip, brings up Docker (PostgreSQL 16 + Redis),
-pulls the Ollama models for your `WCFP_MACHINE` profile, and restores the
+pulls the Ollama models for your `CFP_MACHINE` profile, and restores the
 latest `pg_dump` from GCS via rclone.
 
 Full lifecycle (pull → run → sync → wipe) is documented in `context.md §18`.
@@ -50,11 +50,11 @@ Full lifecycle (pull → run → sync → wipe) is documented in `context.md §1
 
 ## Machine profiles
 
-`WCFP_MACHINE` controls which LLM tiers run locally. Jobs whose required model
-is absent get pushed to `wcfp:escalate:tier4` and accumulate until the next
+`CFP_MACHINE` controls which LLM tiers run locally. Jobs whose required model
+is absent get pushed to `cfp:escalate:tier4` and accumulate until the next
 session on a capable machine — nothing is lost.
 
-| `WCFP_MACHINE` | Min VRAM | Tiers / Models                                                     |
+| `CFP_MACHINE` | Min VRAM | Tiers / Models                                                     |
 |----------------|----------|--------------------------------------------------------------------|
 | `dgx`          | 80 GB    | All tiers + `deepseek-r1:70b` for Tier 4                           |
 | `gpu_large`    | 24 GB    | Tiers 1–4 (`qwen3:4b` + `qwen3:14b` + `qwen3:32b` + `deepseek-r1:32b`) |
@@ -149,14 +149,14 @@ automatically on every run.
 | `memory/`               | Session memory files (travel with the repo; mirror to `~/.claude/`)          |
 | `SESSION.md`            | Current session state — read at the start of every session                   |
 | `setup.sh`              | Clone + venv + pip + Docker + rclone pull + Ollama pull                      |
-| `scraper.py`            | Standalone v1 WikiCFP scraper (deleted once `wcfp/parsers/wikicfp.py` lands) |
-| `generate_md.py`        | Markdown report generator (replaced by `wcfp/analytics.py` driver)           |
+| `scraper.py`            | Standalone v1 WikiCFP scraper (deleted once `cfp/parsers/wikicfp.py` lands) |
+| `generate_md.py`        | Markdown report generator (replaced by `cfp/analytics.py` driver)           |
 
 ---
 
 ## Development status
 
-**v1 is in progress.** The `wcfp/` package does not yet exist — only the
+**v1 is in progress.** The `cfp/` package does not yet exist — only the
 standalone `scraper.py` + `generate_md.py` are runnable today. Codegen specs
 01, 04, 05, 09, 11 are written; specs 02, 03, 06, 07, 08, 10, 12–17 are still
 to be authored. Implementation order is documented in `SESSION.md`.
@@ -177,3 +177,5 @@ and adds the new modules.
 - rclone (for GCS pull/push of `pg_dump` + Parquet snapshots)
 
 Python deps: see `requirements.txt`.
+
+Last setup: 2026-04-29 15:31:35 (machine: local)

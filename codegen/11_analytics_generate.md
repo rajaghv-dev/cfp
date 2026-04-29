@@ -1,7 +1,7 @@
-# Codegen 11 — wcfp/analytics.py + generate_md.py (replacement)
+# Codegen 11 — cfp/analytics.py + generate_md.py (replacement)
 
 ## Files to Create/Replace
-- `wcfp/analytics.py` (new)
+- `cfp/analytics.py` (new)
 - `generate_md.py` (REPLACE — same filename, new implementation)
 
 ## Key rule
@@ -10,7 +10,7 @@ ALL of the location taxonomy, India state-wise logic, table helpers MUST be pres
 
 ---
 
-## wcfp/analytics.py — full implementation
+## cfp/analytics.py — full implementation
 
 ```python
 """DuckDB analytics layer. Reads PostgreSQL via postgres_scanner. Never writes."""
@@ -82,7 +82,7 @@ all_confs = json.loads(DATA_FILE.read_text(encoding="utf-8"))
 With this:
 ```python
 # NEW — load from DuckDB→PostgreSQL
-from wcfp.analytics import get_analytics_conn
+from cfp.analytics import get_analytics_conn
 
 def load_all_events() -> list[dict]:
     conn = get_analytics_conn()
@@ -98,7 +98,7 @@ def load_all_events() -> list[dict]:
             country, region, india_state,
             paper_deadline::VARCHAR AS paper_deadline,
             notification::VARCHAR AS notification,
-            wikicfp_url, official_url,
+            origin_url, official_url,
             raw_tags, description, source
         FROM pg.events
     """).fetchdf().to_dict('records')
@@ -106,7 +106,7 @@ def load_all_events() -> list[dict]:
     for r in rows:
         r["when"]  = r.pop("when_raw", "") or r.get("start_date", "") or ""
         r["where"] = r.pop("where_raw", "") or ""
-        r["url"]   = r.get("official_url") or r.get("wikicfp_url") or ""
+        r["url"]   = r.get("official_url") or r.get("origin_url") or ""
         # keywords field expected by old code
         r["keywords"] = []
     return rows
@@ -148,7 +148,7 @@ NOTES_DIR = Path("notes")
 
 def write_event_note(event_dict: dict, overwrite_notes: bool = False) -> None:
     """Write a per-conference Markdown note, preserving user's ## Notes content."""
-    from wcfp.models import Event
+    from cfp.models import Event
     # Derive category subdir and slug
     cat  = (event_dict.get("category") or "general").lower().replace(",", "_").split("_")[0]
     slug = _derive_slug(event_dict)  # ACRONYM-YEAR
