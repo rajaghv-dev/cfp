@@ -141,6 +141,13 @@ Full question details + recommended answers: `arch.md §1`
 - [x] **Q14** — Quant tags pinned in `PROFILE_MODELS` (q4_K_M default, q8_0 on dgx)
 Full answers: `arch.md §1`
 
+### Infrastructure ✅ RUNNING (2026-04-29)
+- [x] Docker Desktop WSL2 integration enabled; context set to `default` (Unix socket)
+- [x] `cfp_postgres` — pgvector/pgvector:pg16, pgvector 0.8.2 installed, healthy
+- [x] `cfp_redis` — redis:7-alpine with AOF, healthy
+- [x] `cfp_ollama` — ollama/ollama, named volume `ollama_models`, healthy
+- [ ] GCS / rclone — pending bucket name + project ID from user
+
 ### P1 — Write missing v1 codegen specs
 - [ ] `codegen/02` — `cfp/prompts_parser.py`
 - [ ] `codegen/03` — `cfp/fetch.py` (aiohttp, not requests — arch.md S13)
