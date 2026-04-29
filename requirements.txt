@@ -35,6 +35,10 @@ google-cloud-storage>=2.0     # optional: only needed if using gcloud auth
 # Markdown / data export
 # (no extra deps — built-in csv, json)
 
+# Test-only
+pytest>=8.0
+fakeredis>=2.20
+
 # v2 only (do not install for v1):
 # owlready2>=0.46
 # rdflib>=7.0
