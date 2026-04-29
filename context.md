@@ -434,22 +434,22 @@ PROFILE_MODELS = {
 ## 13. Tiered Curation Pipeline
 
 ```
-TIER 1  qwen3:4b   RTX 3080  ~200 rec/min
+TIER 1  qwen3:4b   gpu_small+ profile  ~200 rec/min
         Output: {is_cfp, categories, is_virtual, confidence}
         conf >= 0.85  →  write to PostgreSQL
         conf <  0.85  →  Redis cfp:escalate:tier2
 
-TIER 2  qwen3:14b  RTX 3080
+TIER 2  qwen3:14b  gpu_mid+ profile
         Output: full Event + Person[] + Venue + Organisation[]
         conf >= 0.85  →  PostgreSQL + graph.py syncs to AGE
         conf <  0.85  →  Redis cfp:escalate:tier3
 
-TIER 3  qwen3:32b  RTX 4090  (tool calling for unknown sites)
+TIER 3  qwen3:32b  gpu_large+ profile  (tool calling for unknown sites)
         Output: Event + archive_urls + tool_trace
         conf >= 0.80  →  PostgreSQL + AGE
         conf <  0.80  →  Redis cfp:escalate:tier4
 
-TIER 4  deepseek-r1:70b  dgx/gpu_large profile  (overnight batch, no tool calling)
+TIER 4  deepseek-r1:70b  dgx profile  (overnight batch, no tool calling)
         Output: final Event + OntologyEdge[] + dedup:{same, reason}
         Always final.
 ```

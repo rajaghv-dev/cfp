@@ -29,7 +29,7 @@ context.md (19 sections), prompts.md (7 prompts), SESSION.md, setup.sh, memory/,
 
 ### Major architectural change
 **Multi-machine → single-machine + GCS**
-- Old: RTX 3080 + RTX 4090 + DGX running concurrently, OLLAMA_HOSTS routing dict
+- Old: multiple GPUs running concurrently, OLLAMA_HOSTS routing dict
 - New: any single machine, CFP_MACHINE profile, single OLLAMA_HOST=localhost
 - GCS = off-machine persistence (pg_dump + rclone)
 - Machine lifecycle: pull → restore → run → sync → wipe
