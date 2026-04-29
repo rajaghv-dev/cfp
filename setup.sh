@@ -160,9 +160,9 @@ yellow "[step 6/7] Ollama models for profile: $CFP_MACHINE"
 declare -A PROFILE_MODELS
 PROFILE_MODELS[cpu_only]="qwen3:4b-q4_K_M nomic-embed-text"
 PROFILE_MODELS[gpu_small]="qwen3:4b-q4_K_M nomic-embed-text"
-PROFILE_MODELS[gpu_mid]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M nomic-embed-text"
-PROFILE_MODELS[gpu_large]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M qwen3:32b-q4_K_M deepseek-r1:32b nomic-embed-text"
-PROFILE_MODELS[dgx]="qwen3:4b-q8_0 qwen3:14b-q8_0 qwen3:32b-q8_0 deepseek-r1:32b deepseek-r1:70b nomic-embed-text"
+PROFILE_MODELS[gpu_mid]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M mistral-nemo:12b nomic-embed-text"
+PROFILE_MODELS[gpu_large]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M qwen3:32b-q4_K_M deepseek-r1:32b mistral-nemo:12b nomic-embed-text"
+PROFILE_MODELS[dgx]="qwen3:4b-q8_0 qwen3:14b-q8_0 qwen3:32b-q8_0 deepseek-r1:32b deepseek-r1:70b mistral-nemo:12b nomic-embed-text"
 
 MODELS="${PROFILE_MODELS[$CFP_MACHINE]:-}"
 if [ -z "$MODELS" ]; then

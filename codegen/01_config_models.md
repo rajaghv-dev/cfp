@@ -43,13 +43,17 @@ CFP_MACHINE = os.getenv("CFP_MACHINE", "gpu_mid")
 # avoid Ollama silently picking Q4 on small VRAM (see arch.md §1 Q14).
 PROFILE_MODELS: dict[str, list[str]] = {
     "dgx":       ["qwen3:4b-q8_0",   "qwen3:14b-q8_0",   "qwen3:32b-q8_0",
-                  "deepseek-r1:32b",  "deepseek-r1:70b",  "nomic-embed-text"],
+                  "deepseek-r1:32b",  "deepseek-r1:70b",
+                  "mistral-nemo:12b", "nomic-embed-text"],
     "gpu_large": ["qwen3:4b-q4_K_M", "qwen3:14b-q4_K_M", "qwen3:32b-q4_K_M",
-                  "deepseek-r1:32b",  "nomic-embed-text"],
-    "gpu_mid":   ["qwen3:4b-q4_K_M", "qwen3:14b-q4_K_M", "nomic-embed-text"],
+                  "deepseek-r1:32b",  "mistral-nemo:12b", "nomic-embed-text"],
+    "gpu_mid":   ["qwen3:4b-q4_K_M", "qwen3:14b-q4_K_M",
+                  "mistral-nemo:12b", "nomic-embed-text"],
     "gpu_small": ["qwen3:4b-q4_K_M", "nomic-embed-text"],
     "cpu_only":  ["qwen3:4b-q4_K_M", "nomic-embed-text"],
 }
+# mistral-nemo:12b — long-context HTML routing when token count exceeds
+# LONG_CONTEXT_TOKENS (see below). gpu_mid+ profiles only — needs ~9 GB VRAM.
 
 # Tier thresholds — escalate if confidence < threshold
 TIER_THRESHOLD = {1: 0.85, 2: 0.85, 3: 0.80}
