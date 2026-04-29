@@ -47,3 +47,15 @@ Go deep when the task is docs, analysis, or prompts. Be terse for file edits and
 ## Stop when asked — do not finish speculative work
 "stop" = commit what exists and end. Do not add "one more thing."
 **Why:** Sessions are deliberate. Over-generating creates review debt.
+
+## Never delete pulled Ollama models without explicit instruction
+Even if a model looks redundant or superseded (legacy untagged variants, unused tags, etc.), do not propose `ollama rm` or include deletion in any script. List what's on disk; user decides.
+**Why:** User instruction 2026-04-29: "dont delete any models." Pulls are expensive (bandwidth + time) and disk space is plentiful — keeping unused models is cheap insurance against re-pulls.
+
+## Use cfp as the project identifier everywhere
+All internal names: Python package `cfp/`, Redis keys `cfp:*`, DB name `cfp`, DB user `cfp`, env vars `CFP_*`, AGE graph `cfp_graph`. Never `wcfp` or `wikicfp` for internal identifiers. `WikiCFP` (proper noun for the website) and `wikicfp.com` (URL) and `cfp/parsers/wikicfp.py` (parser named after source) are the only allowed exceptions.
+**Why:** User instruction 2026-04-29: "use cfp only not wikicfp or wcfp names in the repo."
+
+## Save SESSION.md and memory files periodically during a session
+Not just at end — update after major blocks of work (e.g. after resolving arch questions, after a rename, after infra setup).
+**Why:** User instruction 2026-04-29: "save sessions and memory md files time to time."
