@@ -41,7 +41,7 @@ type: project
   - Workshop graph node label is dropped from v1; added back in v2 if needed
 
 ## Knowledge Graph (v2)
-- Graph name: `wcfp_graph`
+- Graph name: `cfp_graph` (renamed from `wcfp_graph` 2026-04-29)
 - AGE graph IS the live ontology; `.owl` file is read-only export for Protégé
 - Node labels: Conference, ConferenceSeries, Person, Organisation, Venue, City, Country, Concept, RawTag
 - Workshop node label dropped — replaced by `is_workshop` flag on Conference node
@@ -75,3 +75,23 @@ type: project
 - `fetch.py` must use `aiohttp` (async), not `requests` — 3–5× throughput gain
 - Embeddings batched 32–64 per Ollama call — 10–20× gain on embed generation
 - Redis queue supports `--workers N` with zero code changes to queue.py
+
+## P0 Resolutions (2026-04-29)
+- **Q10 — Ollama model storage**: Bind mount `/mnt/d/wsl/ollama:/root/.ollama` (was: named volume in arch.md recommendation; bind mount chosen because Windows D: drive has 248 GB free vs WSL VHD constraint). One-time pull, persists across container restarts and full WSL wipes. GKE pre-baked images deferred to v2.
+- **Q12 — JSON-mode failure recovery**: Local repair (json5/regex strip code fences) → 1 same-tier retry with reminder preamble → escalate one tier. `JSON_RETRY_SAME_TIER=1`, `JSON_REPAIR_ENABLED=True`, `PARSE_FAIL_THRESHOLD=0.01` in config.py. Track `cfp:metrics:parse_fail:{model}`.
+- **Q14 — Quantisation policy**: Pinned per-profile in `PROFILE_MODELS`:
+  - `cpu_only` / `gpu_small`: q4_K_M only on qwen3:4b
+  - `gpu_mid`: q4_K_M on qwen3:4b + qwen3:14b
+  - `gpu_large`: q4_K_M throughout (qwen3:4b/14b/32b + deepseek-r1:32b)
+  - `dgx`: q8_0 on all qwen3 + deepseek-r1:32b/70b
+
+## Project Identifier Convention (2026-04-29)
+- Internal project name everywhere: `cfp` (not `wcfp` or `wikicfp`)
+- Renamed: Python package `wcfp/` → `cfp/`, Redis keys `wcfp:*` → `cfp:*`, env vars `WCFP_*` → `CFP_*`, DB `wikicfp` → `cfp`, DB user `wcfp` → `cfp`, AGE graph `wcfp_graph` → `cfp_graph`, model field `wikicfp_url` → `origin_url`
+- Preserved (correct as-is): `wikicfp.com` URLs, `WikiCFP` proper noun in prose, `cfp/parsers/wikicfp.py` (named after the source it parses)
+
+## Local Hardware (this machine, 2026-04-29)
+- RTX 3080 Ti Laptop, 16 GB VRAM, CUDA 13.0
+- `CFP_MACHINE=gpu_mid` is the right profile (10 GB target)
+- 16 GB also enables 22B models at Q4 (Devstral, Codestral) — see `evals.md` for the model menu
+- Ollama bind mount: `/mnt/d/wsl/ollama` (Windows D: drive, 248 GB free)

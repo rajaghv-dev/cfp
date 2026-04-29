@@ -5,10 +5,12 @@ type: project
 ---
 
 ## Phase
-**Documentation and architecture complete. Pre-implementation.**
-v1 scope defined in `arch.md §6`. Nothing in `cfp/` exists yet.
+**Infrastructure running. P0 arch blockers resolved. Pre-implementation.**
+v1 scope defined in `arch.md §6`. Nothing in `cfp/` package exists yet.
+Docker stack (postgres+pgvector, redis, ollama+GPU) up and healthy on WSL2.
+Ollama models bind-mounted to `/mnt/d/wsl/ollama` (5.8 GB used, 248 GB free).
 
-## File Inventory (2026-04-26)
+## File Inventory (2026-04-29)
 
 ### Working — do not break
 | File | Notes |
@@ -22,14 +24,17 @@ v1 scope defined in `arch.md §6`. Nothing in `cfp/` exists yet.
 | File | Lines | Notes |
 |---|---|---|
 | `CLAUDE.md` | 80 | Session instructions — auto-loaded by Claude Code |
-| `context.md` | 687 | 20-section spec — v1/v2 annotations, Q15 resolved, DGX/Workshop refs fixed |
-| `arch.md` | 1,479 | 15 questions (Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions · K8s spec · v1/v2 scope |
+| `context.md` | 685 | 20-section spec — Q10/Q12/Q14/Q15 RESOLVED in §17 + §19 |
+| `arch.md` | 1,485 | 15 questions (Q10/Q12/Q14/Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions · K8s spec |
 | `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
 | `lesson_plan.md` | 1,659 | **35-module** curriculum + expanded A–Z glossary |
+| `evals.md` | 255 | Model research log: what runs on 16 GB VRAM, eval-backed list, FPGA/HLS specialists |
 | `requirements.txt` | 40 | Full v1 deps; v2-only commented out |
-| `README.md` | 179 | Current project README with architecture + quick start |
+| `README.md` | 181 | Current project README with architecture + quick start |
 | `SESSION.md` | — | Priority to-do list + current state |
 | `.env.example` | 35 | All env vars with defaults |
+| `docker-compose.yml` | — | postgres + redis + ollama with GPU + bind mount to D: drive |
+| `scripts/setup_postgres.sh` | — | Native PG16+pgvector install fallback for WSL2 |
 
 ### Codegen specs — written and reviewed (all reviewed 2026-04-26)
 | File | Covers | Status |
@@ -49,14 +54,29 @@ v1 scope defined in `arch.md §6`. Nothing in `cfp/` exists yet.
 
 ## Priority To-Do List
 
-### P0 — Blockers: resolve before writing any code
-These 3 open questions hit v1 modules directly. Answers + recommendations are in `arch.md §1`.
-
-| # | Question | Blocks |
+### P0 — Blockers ✅ ALL RESOLVED (2026-04-29)
+| # | Question | Resolution |
 |---|---|---|
-| Q10 | Ollama model storage: named Docker volume vs re-pull each session | `docker-compose.yml`, `setup.sh` |
-| Q12 | JSON-mode failure: retry budget and escalation path | `cfp/llm/client.py` |
-| Q14 | Quantisation policy: pin quant tags per `PROFILE_MODELS` entry | `config.py` |
+| Q10 | Ollama model storage | Bind mount `/mnt/d/wsl/ollama:/root/.ollama` (Windows D: drive, 248 GB free) |
+| Q12 | JSON-mode failure recovery | Local repair → 1 same-tier retry → escalate; constants in `config.py`: `JSON_RETRY_SAME_TIER=1`, `JSON_REPAIR_ENABLED=True` |
+| Q14 | Quantisation policy | Pinned per-profile q4_K_M tags in `PROFILE_MODELS` (q8_0 on dgx) |
+
+### Infrastructure ✅ RUNNING (2026-04-29)
+- Docker Desktop WSL2 integration enabled; `DOCKER_CONTEXT=default` in `~/.bashrc`
+- `cfp_postgres` (pgvector/pgvector:pg16, pgvector 0.8.2 enabled, healthy)
+- `cfp_redis` (redis:7-alpine, AOF persistence on, healthy)
+- `cfp_ollama` (GPU passthrough enabled — RTX 3080 Ti Laptop 16 GB VRAM, healthy)
+- Ollama bind mount: `/mnt/d/wsl/ollama` (5.8 GB used, models pulled below)
+- rclone v1.73.5 installed at `~/.local/bin/rclone`
+
+### Models pulled
+- `nomic-embed-text:latest` (274 MB)
+- `qwen3:4b` (2.5 GB) — TO REMOVE (superseded)
+- `qwen3.5:4b` (3.4 GB) — Tier 1
+
+### Pending infrastructure
+- GCS / rclone remote: needs bucket name + GCP project ID from user
+- Models to pull next (per `evals.md` §8): `qwen2.5-coder:14b`, `deepseek-r1:14b`, `deepseek-coder-v2:16b`, `codestral:22b`, `devstral-small-2:24b`, `codev-r1-rl-qwen-7b` (HuggingFace GGUF)
 
 ---
 
@@ -78,6 +98,7 @@ In order (each may depend on the previous):
 ### P2 — Patch known issues in written specs ✅ COMPLETE (2026-04-26)
 - [x] Spec 04: `paper_deadline=` throughout — done
 - [x] Spec 11: `paper_deadline::VARCHAR` in SQL — done
+- [x] All identifiers renamed: `wcfp/wikicfp` → `cfp` (2026-04-29) — package, Redis keys, env vars, DB name/user, AGE graph name (`wcfp_graph` → `cfp_graph`), field name `wikicfp_url` → `origin_url`. WikiCFP.com URL and proper noun preserved.
 
 ---
 

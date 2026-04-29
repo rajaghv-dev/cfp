@@ -65,3 +65,49 @@ P0 (Q10/Q12/Q14 blockers) → P1 (missing specs) → P2 (patch stale specs) → 
 
 ### Memory unified into repo
 All memory files moved to memory/ in the repo. Local .claude/ memory mirrors repo.
+
+---
+
+## Session 3 — 2026-04-29
+
+### P0 arch blockers all resolved (Q10, Q12, Q14)
+- Q10 → Ollama bind mount `/mnt/d/wsl/ollama:/root/.ollama` (Windows D: drive, 248 GB free)
+- Q12 → Local JSON repair → 1 same-tier retry → escalate; `JSON_RETRY_SAME_TIER=1`, `JSON_REPAIR_ENABLED=True` added to config.py spec
+- Q14 → `PROFILE_MODELS` updated with pinned per-profile quant tags (q4_K_M default, q8_0 on dgx)
+
+### Repo-wide identifier rename (wcfp/wikicfp → cfp)
+- Renamed across 22 files via perl script: package paths (`wcfp/` → `cfp/`), Python imports (`wcfp.` → `cfp.`), Redis keys (`wcfp:` → `cfp:`), env vars (`WCFP_` → `CFP_`), AGE graph (`wcfp_graph` → `cfp_graph`), DB/user (`wikicfp`/`wcfp` → `cfp`), field name (`wikicfp_url` → `origin_url`)
+- Preserved: `wikicfp.com` URLs, `WikiCFP` proper noun, `cfp/parsers/wikicfp.py` filename (named after source it parses)
+- Standing instruction added to memory/feedback_style.md: use `cfp` only
+
+### Infrastructure brought up (Docker stack on WSL2)
+- Docker Desktop WSL2 integration enabled; required `docker context use default` because `desktop-linux` context uses Windows named pipe (doesn't work from WSL2). Persisted via `DOCKER_CONTEXT=default` in `~/.bashrc`.
+- `docker-compose.yml` written: postgres+pgvector + redis+AOF + ollama+GPU
+- Stack running: postgres 16 + pgvector 0.8.2, redis 7-alpine with AOF, ollama with GPU passthrough (RTX 3080 Ti Laptop, 16 GB)
+- Ollama bind-mounted to `/mnt/d/wsl/ollama` (avoids WSL VHD constraint; 5.8 GB used)
+- rclone v1.73.5 installed at `~/.local/bin/rclone` (no sudo)
+- Native PG install fallback script written: `scripts/setup_postgres.sh`
+
+### Model research → evals.md
+- Researched best open-source code/reasoning/RTL models for 16 GB VRAM
+- 5 web searches + 3 page fetches; documented all sources in evals.md
+- Top picks for this hardware (eval-backed):
+  - `devstral-small-2:24b` (15 GB) — best agentic coding that fits
+  - `deepseek-coder-v2:16b` (9 GB) — long-context MoE
+  - `qwen2.5-coder:14b` (10 GB) — primary local code
+  - `deepseek-r1:14b` (8.8 GB) — reasoning/debugging
+  - `codestral:22b` (12 GB) — FIM autocomplete
+  - `codev-r1-rl-qwen-7b` (5 GB, HF GGUF) — Verilog/RTL specialist
+- Models that DON'T fit (rejected): GLM-5, Kimi K2.5 (623 GB!), Qwen3.5-397B, DeepSeek V4
+
+### Models pulled so far
+- `nomic-embed-text:latest` (274 MB)
+- `qwen3:4b` (2.5 GB) — to be removed (qwen3.5 supersedes)
+- `qwen3.5:4b` (3.4 GB) — Tier 1
+
+### Files created this session
+- `docker-compose.yml`, `evals.md`, `scripts/setup_postgres.sh`, `.env`
+
+### Standing behaviour additions to feedback memory
+- Use `cfp` only — never `wcfp` or `wikicfp` for internal identifiers
+- Save SESSION.md and memory files periodically during a session, not just at end

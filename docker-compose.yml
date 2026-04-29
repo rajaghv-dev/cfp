@@ -38,18 +38,16 @@ services:
     ports:
       - "11434:11434"
     volumes:
-      - ollama_models:/root/.ollama
+      - /mnt/d/wsl/ollama:/root/.ollama
     restart: unless-stopped
-    # Uncomment the section below if you have an NVIDIA GPU and nvidia-container-toolkit installed:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 volumes:
   pgdata:
   redisdata:
-  ollama_models:

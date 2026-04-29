@@ -75,13 +75,16 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | File | Lines | Notes |
 |---|---|---|
 | `CLAUDE.md` | 80 | Standing session instructions — auto-loaded by Claude Code |
-| `context.md` | 687 | 20-section architecture spec — v1/v2 annotations, Q15 resolved |
-| `arch.md` | 1,479 | 15 questions · 18 risks · 8 ADRs · 15 suggestions · K8s spec · v1/v2 scope split |
+| `context.md` | 685 | 20-section architecture spec — v1/v2 annotations, Q10/Q12/Q14/Q15 resolved |
+| `arch.md` | 1,485 | 15 questions (Q10/Q12/Q14/Q15 RESOLVED) · 18 risks · 8 ADRs · 15 suggestions |
 | `prompts.md` | 1,008 | 12 LLM prompts + search queries + parsers + external sources |
 | `lesson_plan.md` | 1,659 | 35-module learning curriculum + expanded A–Z glossary |
+| `evals.md` | 255 | Model research log — what runs on 16 GB VRAM, eval-backed recommendations |
 | `requirements.txt` | 40 | Full v1 deps grouped by purpose; v2-only deps commented out |
-| `README.md` | 179 | Current project README with architecture + quick start |
+| `README.md` | 181 | Current project README with architecture + quick start |
 | `.env.example` | 35 | All env vars with defaults and comments |
+| `docker-compose.yml` | — | postgres+pgvector, redis+AOF, ollama+GPU+bind-mount |
+| `scripts/setup_postgres.sh` | — | Native PG16+pgvector install for WSL2 (fallback to Docker) |
 | `SESSION.md` | this | Current state + priority to-do list |
 | `setup.sh` | — | Clone + venv + pip + optional Ollama pull |
 
@@ -122,12 +125,12 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 |---|---|---|
 | Q4 — AGE consistency (derived tables vs authoritative) | `cfp/graph.py` | open (v2) |
 | Q6 — Cross-source dedup trigger timing | `cfp/dedup.py` | open (v2 needs LLM confirmation; v1 uses pgvector-only) |
-| Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` | open |
-| Q12 — JSON-mode failure retry budget | `cfp/llm/client.py` | open |
-| Q14 — Quantisation policy per CFP_MACHINE profile | `config.py` | open |
-| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `cfp/models.py`, `cfp/graph.py` | ✅ **RESOLVED 2026-04-26** — `is_workshop` flag on Event; `Workshop` graph node dropped from v1 (context.md §5 updated) |
+| Q10 — Ollama model storage (named volume vs re-pull) | `docker-compose.yml`, `setup.sh` | ✅ **RESOLVED 2026-04-29** — bind mount `/mnt/d/wsl/ollama:/root/.ollama` |
+| Q12 — JSON-mode failure retry budget | `cfp/llm/client.py` | ✅ **RESOLVED 2026-04-29** — local repair → 1 retry → escalate; `JSON_RETRY_SAME_TIER=1` |
+| Q14 — Quantisation policy per CFP_MACHINE profile | `config.py` | ✅ **RESOLVED 2026-04-29** — pinned q4_K_M tags (q8_0 on dgx) in `PROFILE_MODELS` |
+| Q15 — Workshop: `is_workshop` flag vs `Workshop` graph node | `cfp/models.py`, `cfp/graph.py` | ✅ **RESOLVED 2026-04-26** — `is_workshop` flag on Event; `Workshop` graph node dropped from v1 |
 
-Full question details + recommended answers: `arch.md §1`
+Full question details + decisions: `arch.md §1`
 
 ---
 
@@ -142,11 +145,33 @@ Full question details + recommended answers: `arch.md §1`
 Full answers: `arch.md §1`
 
 ### Infrastructure ✅ RUNNING (2026-04-29)
-- [x] Docker Desktop WSL2 integration enabled; context set to `default` (Unix socket)
-- [x] `cfp_postgres` — pgvector/pgvector:pg16, pgvector 0.8.2 installed, healthy
-- [x] `cfp_redis` — redis:7-alpine with AOF, healthy
-- [x] `cfp_ollama` — ollama/ollama, named volume `ollama_models`, healthy
-- [ ] GCS / rclone — pending bucket name + project ID from user
+- [x] Docker Desktop WSL2 integration enabled; context set to `default` (Unix socket); `DOCKER_CONTEXT=default` in `~/.bashrc`
+- [x] `cfp_postgres` — pgvector/pgvector:pg16, pgvector 0.8.2 installed, healthy, DSN `postgresql://cfp:cfp@localhost:5432/cfp`
+- [x] `cfp_redis` — redis:7-alpine with `--appendonly yes` (AOF persistence), healthy
+- [x] `cfp_ollama` — ollama/ollama, **GPU enabled** (RTX 3080 Ti Laptop, 16 GB VRAM), bind mount `/mnt/d/wsl/ollama:/root/.ollama` (5.8 GB used)
+- [x] `rclone v1.73.5` installed at `~/.local/bin/rclone`
+- [ ] GCS / rclone remote configured — pending bucket name + GCP project ID from user
+
+### Hardware (verified 2026-04-29)
+- GPU: NVIDIA GeForce RTX 3080 Ti Laptop GPU, 16 GB VRAM, driver 581.95, CUDA 13.0
+- D: drive (`/mnt/d/`): 248 GB free — used for Ollama models
+- Effective VRAM ceiling for inference: ~14 GB (KV cache + overhead)
+- `CFP_MACHINE=gpu_mid` profile is the right starting point; some 22B Q4 models fit (Devstral, Codestral)
+
+### Models pulled
+| Model | Size | Notes |
+|---|---|---|
+| `nomic-embed-text:latest` | 274 MB | Embeddings — used by all profiles |
+| `qwen3:4b` | 2.5 GB | **TO REMOVE** — superseded by qwen3.5:4b |
+| `qwen3.5:4b` | 3.4 GB | Tier 1 triage |
+
+### Models to pull next (per `evals.md` §8 — eval-backed picks for 16 GB)
+- [ ] `qwen2.5-coder:14b` (~10 GB) — primary local code model
+- [ ] `deepseek-r1:14b` (~8.8 GB) — Tier 4 reasoning + debugging
+- [ ] `deepseek-coder-v2:16b` (~9 GB) — long-context (128K) MoE
+- [ ] `codestral:22b` (~12 GB) — FIM autocomplete + HLS/VHDL
+- [ ] `devstral-small-2:24b` (~15 GB) — agentic coding (tight fit; verify)
+- [ ] `codev-r1-rl-qwen-7b` (~5 GB, HuggingFace GGUF) — Verilog/RTL specialist
 
 ### P1 — Write missing v1 codegen specs
 - [ ] `codegen/02` — `cfp/prompts_parser.py`
