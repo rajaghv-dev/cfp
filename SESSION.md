@@ -93,7 +93,7 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 |---|---|---|
 | `codegen/00_HOWTO.md` | How to use the codegen files | — |
 | `codegen/01_config_models.md` | `config.py` + `cfp/models.py` | 2026-04-26 (gap audit: OLLAMA_HOST single, paper_deadline, is_workshop, sponsor_names, scrape_session_id, PersonRole.ORGANIZER/OTHER, OrgType.OTHER) |
-| `codegen/04_wikicfp_parser.md` | `cfp/parsers/` | 2026-04-26 (patched: `paper_deadline=` throughout; `_parse_deadline_cell` correct) |
+| `codegen/04_parsers.md` | `cfp/parsers/` | 2026-04-26 (patched: `paper_deadline=` throughout; `_parse_deadline_cell` correct) |
 | `codegen/05_db_schema.md` | `cfp/db.py` | 2026-04-26 (gap audit: paper_deadline, is_workshop, submission_system, sponsor_names, quality_flags, scrape_sessions table, sites.last_cursor) |
 | `codegen/09_llm_client.md` | `cfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: single OLLAMA_HOST, get_available_models, profile_intersection) |
 | `codegen/11_analytics_generate.md` | `cfp/analytics.py` + `generate_md.py` | 2026-04-26 (patched: `paper_deadline::VARCHAR` in SQL; all deadline refs updated) |

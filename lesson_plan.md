@@ -915,7 +915,7 @@ fragile.
 
 ### How it fits
 `cfp/parsers/wikicfp.py` copies `find_data_table()` and `parse_table()`
-verbatim from the original `scraper.py` — see `codegen/04_wikicfp_parser.md`
+verbatim from the original `scraper.py` — see `codegen/04_parsers.md`
 lines 90–143. Both functions take a `BeautifulSoup` object built with the
 `lxml` parser backend (faster than the stdlib `html.parser`).
 
