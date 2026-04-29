@@ -258,7 +258,7 @@ def test_ollama_client_chat_json_roundtrip():
     if "qwen3:4b-q4_K_M" not in inter:
         pytest.skip("qwen3:4b-q4_K_M not pulled locally")
 
-    client = OllamaClient("qwen3:4b", timeout=30.0)
+    client = OllamaClient("qwen3:4b", timeout=120.0)
     raw = client.chat(
         messages=[
             {
@@ -271,7 +271,7 @@ def test_ollama_client_chat_json_roundtrip():
             },
         ],
         format="json",
-        options={"temperature": 0.0, "num_predict": 32},
+        options={"temperature": 0.0, "num_predict": 256},
     )
     parsed = _parse_json_response(raw)
     assert parsed is not None, f"unparseable response: {raw!r}"

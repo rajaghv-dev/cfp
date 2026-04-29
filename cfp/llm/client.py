@@ -115,13 +115,17 @@ def get_available_models(host: str = OLLAMA_HOST) -> list[str]:
 def profile_intersection(host: str = OLLAMA_HOST) -> set[str]:
     """needed ∩ available — models on this profile that are actually pulled.
 
-    Returned as a set so callers can do membership tests cheaply. Tier
-    handlers use this to decide whether to run locally or raise
-    TierEscalation(reason="model_unavailable", target_tier=4).
+    Treats "model" as matching "model:latest" (Ollama's default tag) so
+    PROFILE_MODELS entries without quant suffixes still match. Tier handlers
+    use this to decide local-vs-escalate routing.
     """
     needed = set(PROFILE_MODELS.get(CFP_MACHINE, []))
     have = set(get_available_models(host=host))
-    return needed & have
+    matched: set[str] = set()
+    for n in needed:
+        if n in have or f"{n}:latest" in have or any(h == n for h in have):
+            matched.add(n)
+    return matched
 
 
 def resolve_model(name: str) -> str:
