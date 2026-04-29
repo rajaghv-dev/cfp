@@ -1,17 +1,32 @@
 #!/usr/bin/env bash
-# setup.sh — clone or update the cfp repo and set up Python environment
+# setup.sh — bring up the cfp pipeline on a fresh machine.
 # Usage:
-#   bash setup.sh                        # set up current directory
-#   bash setup.sh <repo-url>             # clone from URL first, then set up
-#   CFP_MACHINE=rtx4090 bash setup.sh   # set machine role (rtx3080|rtx4090|dgx|local)
+#   bash setup.sh                                # set up current directory
+#   bash setup.sh <repo-url>                     # clone first, then set up
+#   CFP_MACHINE=gpu_large bash setup.sh         # set hardware profile
+#
+# CFP_MACHINE values: cpu_only | gpu_small | gpu_mid | gpu_large | dgx
+#
+# Order of operations:
+#   1. Clone / cd into repo
+#   2. Bring up Docker stack (postgres + pgvector, redis, ollama)
+#   3. Wait for postgres healthcheck
+#   4. Validate extensions via scripts/test_extensions.sh
+#   5. Python venv + dependencies
+#   6. Pull Ollama models for the CFP_MACHINE profile
+#   7. Connectivity check (WikiCFP)
 set -euo pipefail
 
 REPO_URL="${1:-}"
-CFP_MACHINE="${CFP_MACHINE:-local}"
+CFP_MACHINE="${CFP_MACHINE:-gpu_mid}"
 PYTHON="${PYTHON:-python3}"
 VENV=".venv"
 
-# ── 1. Clone or update repo ────────────────────────────────────────────────
+green() { printf '\033[0;32m%s\033[0m\n' "$1"; }
+red()   { printf '\033[0;31m%s\033[0m\n' "$1"; }
+yellow(){ printf '\033[0;33m%s\033[0m\n' "$1"; }
+
+# ── 1. Clone or cd into repo ──────────────────────────────────────────────
 if [ -n "$REPO_URL" ]; then
     REPO_DIR="${2:-$(basename "$REPO_URL" .git)}"
     if [ -d "$REPO_DIR/.git" ]; then
@@ -24,129 +39,192 @@ if [ -n "$REPO_URL" ]; then
     cd "$REPO_DIR"
 fi
 
-echo "=== CFP Setup (machine: $CFP_MACHINE) ==="
+echo "================================================================"
+echo "CFP setup — machine profile: $CFP_MACHINE"
 echo "Working directory: $(pwd)"
+echo "================================================================"
 
-# ── 2. Python check ────────────────────────────────────────────────────────
+# ── 2. Docker stack: enable + connect + validate ──────────────────────────
+yellow "[step 1/7] Docker stack — enable + connect + validate"
+
+if ! command -v docker &>/dev/null; then
+    red "  ✗ docker not found — install Docker Desktop (Windows/Mac) or docker-ce (Linux)"
+    red "    On WSL2 also enable: Docker Desktop → Settings → Resources → WSL Integration"
+    exit 1
+fi
+
+# Force Unix-socket context on WSL2 (avoids the desktop-linux npipe error).
+if [ -S /var/run/docker.sock ]; then
+    export DOCKER_CONTEXT=default
+fi
+
+if ! docker info >/dev/null 2>&1; then
+    red "  ✗ docker daemon not reachable. Try:"
+    red "    1) ensure Docker Desktop is running"
+    red "    2) WSL2: docker context use default"
+    exit 1
+fi
+green "  ✓ docker reachable ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo unknown))"
+
+if [ ! -f docker-compose.yml ]; then
+    red "  ✗ docker-compose.yml not found in $(pwd)"
+    exit 1
+fi
+
+echo "  Bringing up postgres + redis + ollama (docker compose up -d)..."
+docker compose up -d >/dev/null
+green "  ✓ containers started"
+
+echo "  Waiting for postgres to be healthy..."
+for i in $(seq 1 30); do
+    STATUS=$(docker inspect --format '{{.State.Health.Status}}' cfp_postgres 2>/dev/null || echo "starting")
+    if [ "$STATUS" = "healthy" ]; then
+        green "  ✓ cfp_postgres healthy after ${i}s"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        red "  ✗ cfp_postgres did not become healthy in 30s"
+        docker compose logs postgres | tail -20
+        exit 1
+    fi
+    sleep 1
+done
+
+# Run the extension smoke test
+if [ -x scripts/test_extensions.sh ]; then
+    echo "  Running scripts/test_extensions.sh..."
+    if bash scripts/test_extensions.sh >/tmp/cfp_ext_test.log 2>&1; then
+        green "  ✓ pgvector smoke test passed"
+    else
+        red "  ✗ pgvector smoke test failed — see /tmp/cfp_ext_test.log"
+        tail -30 /tmp/cfp_ext_test.log
+        exit 1
+    fi
+else
+    yellow "  [warn] scripts/test_extensions.sh missing — skipping validation"
+fi
+
+# Redis ping
+if docker exec cfp_redis redis-cli ping 2>/dev/null | grep -q PONG; then
+    green "  ✓ cfp_redis responsive"
+else
+    red "  ✗ cfp_redis not responding to PING"
+    exit 1
+fi
+
+# Ollama health
+if docker exec cfp_ollama ollama list >/dev/null 2>&1; then
+    green "  ✓ cfp_ollama responsive"
+else
+    yellow "  [warn] cfp_ollama not yet responsive — first start may take a few seconds"
+fi
+
+# ── 3. Python ─────────────────────────────────────────────────────────────
+yellow "[step 2/7] Python check"
 if ! command -v "$PYTHON" &>/dev/null; then
-    echo "Error: python3 not found. Install Python 3.10+ and re-run."
+    red "  ✗ python3 not found. Install Python 3.10+ and re-run."
     exit 1
 fi
 PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-echo "Python: $PY_VERSION"
 if "$PYTHON" -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
-    echo "  ✓ Python version OK"
+    green "  ✓ Python $PY_VERSION"
 else
-    echo "  ✗ Python 3.10+ required (found $PY_VERSION)"
+    red "  ✗ Python 3.10+ required (found $PY_VERSION)"
     exit 1
 fi
 
-# ── 3. Virtual environment ─────────────────────────────────────────────────
+# ── 4. Virtual environment ────────────────────────────────────────────────
+yellow "[step 3/7] Virtual environment"
 if [ ! -d "$VENV" ]; then
-    echo "Creating virtual environment: $VENV"
     "$PYTHON" -m venv "$VENV"
 fi
-
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
-echo "  ✓ venv activated: $(which python3)"
+green "  ✓ venv: $(which python3)"
 
-# ── 4. Dependencies ────────────────────────────────────────────────────────
-echo "Installing dependencies..."
+# ── 5. Dependencies ───────────────────────────────────────────────────────
+yellow "[step 4/7] Python dependencies"
 pip install --quiet --upgrade pip
 pip install --quiet -r requirements.txt
-echo "  ✓ Dependencies installed"
+green "  ✓ requirements.txt installed"
 
-# ── 5. Data directory ─────────────────────────────────────────────────────
+# ── 6. Data directories ───────────────────────────────────────────────────
+yellow "[step 5/7] Data directories"
 mkdir -p data/archive data/pg_backup reports ontology notes
-echo "  ✓ Directories ready"
+green "  ✓ data/archive data/pg_backup reports ontology notes"
 
-# ── 6. Ollama models (optional — skipped if Ollama not running) ───────────
-declare -A MACHINE_MODELS
-MACHINE_MODELS[rtx3080]="qwen3:4b qwen3:14b mistral-nemo:12b nomic-embed-text"
-MACHINE_MODELS[rtx4090]="qwen3:32b deepseek-r1:32b"
-MACHINE_MODELS[dgx]="deepseek-r1:70b"
-MACHINE_MODELS[local]="qwen3:4b nomic-embed-text"
+# ── 7. Ollama models for this profile ─────────────────────────────────────
+# Mirrors PROFILE_MODELS in codegen/01_config_models.md (Q14 RESOLVED — pinned quant tags).
+yellow "[step 6/7] Ollama models for profile: $CFP_MACHINE"
 
-MODELS_FOR_MACHINE="${MACHINE_MODELS[$CFP_MACHINE]:-}"
+declare -A PROFILE_MODELS
+PROFILE_MODELS[cpu_only]="qwen3:4b-q4_K_M nomic-embed-text"
+PROFILE_MODELS[gpu_small]="qwen3:4b-q4_K_M nomic-embed-text"
+PROFILE_MODELS[gpu_mid]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M nomic-embed-text"
+PROFILE_MODELS[gpu_large]="qwen3:4b-q4_K_M qwen3:14b-q4_K_M qwen3:32b-q4_K_M deepseek-r1:32b nomic-embed-text"
+PROFILE_MODELS[dgx]="qwen3:4b-q8_0 qwen3:14b-q8_0 qwen3:32b-q8_0 deepseek-r1:32b deepseek-r1:70b nomic-embed-text"
 
-if [ -n "$MODELS_FOR_MACHINE" ] && command -v ollama &>/dev/null; then
-    echo "Checking Ollama models for $CFP_MACHINE..."
-    for model in $MODELS_FOR_MACHINE; do
-        if ollama list 2>/dev/null | grep -q "^${model}"; then
-            echo "  ✓ $model already pulled"
+MODELS="${PROFILE_MODELS[$CFP_MACHINE]:-}"
+if [ -z "$MODELS" ]; then
+    yellow "  [warn] unknown CFP_MACHINE=$CFP_MACHINE — skipping model pull"
+    yellow "         valid: cpu_only | gpu_small | gpu_mid | gpu_large | dgx"
+else
+    for m in $MODELS; do
+        if docker exec cfp_ollama ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then
+            green "  ✓ $m already pulled"
         else
-            echo "  Pulling $model ..."
-            ollama pull "$model" || echo "  [warn] failed to pull $model"
+            echo "  Pulling $m ..."
+            if docker exec cfp_ollama ollama pull "$m" >/dev/null 2>&1; then
+                green "  ✓ $m pulled"
+            else
+                yellow "  [warn] failed to pull $m — re-run later: docker exec cfp_ollama ollama pull $m"
+            fi
         fi
     done
-else
-    echo "  Ollama not found or CFP_MACHINE=local — skipping model pull"
-    echo "  To pull models manually: ollama pull qwen3:4b"
 fi
 
-# ── 7. Connectivity checks (optional) ─────────────────────────────────────
-echo "Checking connectivity..."
-
-# WikiCFP
+# ── 8. WikiCFP reachability (informational) ───────────────────────────────
+yellow "[step 7/7] WikiCFP reachability"
 if python3 -c "
-import requests, sys
+import urllib.request, sys
 try:
-    r = requests.get('http://www.wikicfp.com', timeout=8, headers={'User-Agent': 'cfp-setup/1.0'})
-    sys.exit(0 if r.status_code == 200 else 1)
-except Exception as e:
-    print(f'  [warn] wikicfp.com: {e}')
-    sys.exit(1)
-" 2>/dev/null; then
-    echo "  ✓ WikiCFP reachable"
-else
-    echo "  [warn] WikiCFP unreachable — scrape will fail"
-fi
-
-# PostgreSQL (optional)
-if python3 -c "
-import psycopg, os, sys
-try:
-    dsn = os.getenv('PG_DSN', 'postgresql://cfp:cfp@localhost:5432/cfp')
-    psycopg.connect(dsn, connect_timeout=3).close()
+    req = urllib.request.Request('http://www.wikicfp.com', headers={'User-Agent': 'cfp-setup/1.0'})
+    urllib.request.urlopen(req, timeout=8).close()
     sys.exit(0)
 except Exception as e:
-    print(f'  [info] PostgreSQL not available: {e}')
     sys.exit(1)
 " 2>/dev/null; then
-    echo "  ✓ PostgreSQL reachable"
+    green "  ✓ WikiCFP reachable"
 else
-    echo "  [info] PostgreSQL not running — run: docker compose up -d"
+    yellow "  [warn] WikiCFP unreachable — scrape will fail until network is available"
 fi
 
-# ── 8. Update README with setup timestamp ─────────────────────────────────
+# ── 9. Update README + SESSION timestamps ────────────────────────────────
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-if [ -f README.md ]; then
-    if grep -q "^Last setup:" README.md; then
-        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $CFP_MACHINE)/" README.md
-    else
-        printf '\nLast setup: %s (machine: %s)\n' "$TIMESTAMP" "$CFP_MACHINE" >> README.md
+for f in README.md SESSION.md; do
+    [ -f "$f" ] || continue
+    if grep -q "^Last setup:" "$f"; then
+        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $CFP_MACHINE)/" "$f"
+    elif [ "$f" = "README.md" ]; then
+        printf '\nLast setup: %s (machine: %s)\n' "$TIMESTAMP" "$CFP_MACHINE" >> "$f"
     fi
-fi
-if [ -f SESSION.md ]; then
-    if grep -q "^Last setup:" SESSION.md; then
-        sed -i "s/^Last setup:.*/Last setup: $TIMESTAMP (machine: $CFP_MACHINE)/" SESSION.md
-    fi
-fi
+done
 
 echo ""
-echo "=== Setup complete ==="
+green "================================================================"
+green "Setup complete — machine: $CFP_MACHINE"
+green "================================================================"
 echo ""
-echo "Next steps:"
+echo "Next:"
 echo "  source $VENV/bin/activate"
+echo "  python3 scraper.py --pages 2     # standalone v1 scraper"
 echo ""
-echo "  # Quick scrape (existing implementation):"
-echo "  python3 scraper.py --pages 2"
-echo ""
-echo "  # Once cfp/ package is implemented:"
-echo "  docker compose up -d"
+echo "Once cfp/ package lands:"
 echo "  python3 -m cfp init-db"
 echo "  python3 -m cfp enqueue-seeds"
 echo "  python3 -m cfp run-pipeline"
 echo ""
-echo "  See SESSION.md for full context and next steps."
+echo "Stack control:"
+echo "  docker compose ps           # status"
+echo "  docker compose logs -f      # tail logs"
+echo "  docker compose down         # stop stack (volumes preserved)"
