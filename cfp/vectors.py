@@ -135,12 +135,12 @@ def find_neighbours(
     sql = f"""
         SELECT emb.{cfg['id_col']}                       AS id,
                COALESCE(j.{cfg['label_col']}, '')        AS name,
-               1 - (emb.vec <=> %(vec)s)                 AS cosine
+               1 - (emb.vec <=> %(vec)s::vector)                 AS cosine
         FROM {cfg['embed_table']} emb
         LEFT JOIN {cfg['join_table']} j
                ON j.{cfg['join_id']} = emb.{cfg['id_col']}
-        WHERE 1 - (emb.vec <=> %(vec)s) >= %(min_cosine)s
-        ORDER BY emb.vec <=> %(vec)s
+        WHERE 1 - (emb.vec <=> %(vec)s::vector) >= %(min_cosine)s
+        ORDER BY emb.vec <=> %(vec)s::vector
         LIMIT %(top_k)s
     """
     pool = _get_pool()
@@ -160,10 +160,10 @@ def is_duplicate(vec: Iterable[float]) -> Optional[int]:
     cfg = _cfg("events")
     sql = f"""
         SELECT emb.{cfg['id_col']} AS id,
-               1 - (emb.vec <=> %(vec)s) AS cosine
+               1 - (emb.vec <=> %(vec)s::vector) AS cosine
         FROM {cfg['embed_table']} emb
-        WHERE 1 - (emb.vec <=> %(vec)s) >= %(min_cosine)s
-        ORDER BY emb.vec <=> %(vec)s
+        WHERE 1 - (emb.vec <=> %(vec)s::vector) >= %(min_cosine)s
+        ORDER BY emb.vec <=> %(vec)s::vector
         LIMIT 1
     """
     pool = _get_pool()
@@ -200,13 +200,13 @@ def query_with_filter(
     sql = f"""
         SELECT emb.{cfg['id_col']}                AS id,
                COALESCE(j.{cfg['label_col']}, '') AS name,
-               1 - (emb.vec <=> %(vec)s)          AS cosine
+               1 - (emb.vec <=> %(vec)s::vector)          AS cosine
                {extra_cols}
         FROM {cfg['embed_table']} emb
         JOIN {cfg['join_table']} j
           ON j.{cfg['join_id']} = emb.{cfg['id_col']}
         WHERE {where}
-        ORDER BY emb.vec <=> %(vec)s
+        ORDER BY emb.vec <=> %(vec)s::vector
         LIMIT %(top_k)s
     """
     bind = {**params, "vec": v, "top_k": top_k}
