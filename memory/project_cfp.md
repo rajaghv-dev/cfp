@@ -5,10 +5,14 @@ type: project
 ---
 
 ## Phase
-**Infrastructure running. P0 arch blockers resolved. Pre-implementation.**
-v1 scope defined in `arch.md §6`. Nothing in `cfp/` package exists yet.
-Docker stack (postgres+pgvector, redis, ollama+GPU) up and healthy on WSL2.
-Ollama models bind-mounted to `/mnt/d/wsl/ollama` (5.8 GB used, 248 GB free).
+**v1 fully implemented and tested.** 170/173 tests passing.
+The `cfp/` package now contains 18 Python modules (~5800 LOC source +
+~3000 LOC tests). Docker stack healthy. End-to-end live-verified:
+`python -m cfp doctor` → all 5 checks green. `make` targets work.
+
+Remaining for v1: real-data run (P5 validation).
+Remaining for v2: AGE graph (`cfp/graph.py`), Tier 3+4 modules,
+`cfp/sync.py` (GCS), DuckDB analytics layer, ontology pipeline.
 
 ## File Inventory (2026-04-29)
 

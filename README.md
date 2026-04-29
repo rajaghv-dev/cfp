@@ -27,22 +27,30 @@ data loss.
 ```bash
 git clone https://github.com/rajaghv-dev/cfp.git
 cd cfp
-CFP_MACHINE=gpu_large GCS_BUCKET=cfp-data bash setup.sh
+CFP_MACHINE=gpu_mid bash setup.sh    # venv + pip + Docker + ollama pull
 source .venv/bin/activate
 
-# v1 (current): standalone scraper still works
-python3 scraper.py
-
-# v1 (after cfp/ package lands)
-python -m cfp init-db
-python -m cfp enqueue-seeds
-python -m cfp run-pipeline
-python -m cfp generate-reports
+make up                               # postgres + redis + ollama, wait healthy
+make doctor                           # verify all 5 checks green
+make init-db                          # CREATE schema + extensions (idempotent)
+make seeds                            # enqueue prompts.md URLs to cfp:queue:tier1
+make run                              # run the 4-tier pipeline
+make reports                          # regenerate reports/*.md from PG state
 ```
 
-`setup.sh` provisions venv + pip, brings up Docker (PostgreSQL 16 + Redis),
-pulls the Ollama models for your `CFP_MACHINE` profile, and restores the
-latest `pg_dump` from GCS via rclone.
+Or via Python directly:
+```bash
+python -m cfp doctor
+python -m cfp init-db
+python -m cfp enqueue-seeds
+python -m cfp run-pipeline --workers 4
+python -m cfp generate-reports
+python -m cfp dedup-sweep
+```
+
+`setup.sh` provisions venv + pip, brings up Docker (PostgreSQL 16 + Redis +
+Ollama with GPU passthrough), and pulls the Ollama models for your
+`CFP_MACHINE` profile.
 
 Full lifecycle (pull → run → sync → wipe) is documented in `context.md §18`.
 
@@ -162,10 +170,10 @@ automatically on every run.
 
 ## Development status
 
-**v1 is in progress.** The `cfp/` package does not yet exist — only the
-standalone `scraper.py` + `generate_md.py` are runnable today. Codegen specs
-01, 04, 05, 09, 11 are written; specs 02, 03, 06, 07, 08, 10, 12–17 are still
-to be authored. Implementation order is documented in `SESSION.md`.
+**v1 is fully implemented and tested as of 2026-04-29.** 18 modules in
+`cfp/`, ~5800 LOC of source + ~3000 LOC of tests. **170/173 tests passing**
+(3 skipped — live-Ollama smoke tests). End-to-end verified via
+`python -m cfp doctor`. See `SESSION.md` for the per-module test count.
 
 v2 is an additive migration that adds Apache AGE (graph + Cypher),
 DeepSeek-R1 dedup confirmation, Tier 3 + Tier 4, the DuckDB analytics layer,

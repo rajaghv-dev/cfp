@@ -111,3 +111,53 @@ All memory files moved to memory/ in the repo. Local .claude/ memory mirrors rep
 ### Standing behaviour additions to feedback memory
 - Use `cfp` only — never `wcfp` or `wikicfp` for internal identifiers
 - Save SESSION.md and memory files periodically during a session, not just at end
+
+---
+
+## Session 4 — 2026-04-29 (continuation)
+
+### v1 fully implemented
+All 18 v1 modules + tests delivered in one extended session.
+
+**Implementation strategy**: 7 codegen specs written in parallel by Plan
+sub-agents (read-only), then 5 batches of general-purpose sub-agents wrote
+modules + tests against the live Docker stack. I orchestrated dispatch +
+verified tests + committed each module after sub-agents returned.
+
+**Modules implemented** (in dependency order):
+- Layer 0: `config.py`, `cfp/__init__.py`, `cfp/models.py`
+- Layer 1: `cfp/prompts_parser.py` (13/13 tests)
+- Layer 2: `cfp/fetch.py` (15/15 — aiohttp, robots, Gaussian rate limit)
+- Layer 4: `cfp/db.py` (12/12 — schema, COALESCE upsert, sessions)
+- Layer 5: `cfp/queue.py` (30/30 — Redis sorted-set, Lua pop, leases)
+- Layer 3: `cfp/parsers/` (18/18 — wikicfp paired-row + ai_deadlines + 9 stubs)
+- Layer 6: `cfp/llm/client.py` + `tools.py` (28/31 — Ollama wrapper, tools)
+- Layer 7: `cfp/embed.py` + `cfp/vectors.py` (12/12 — nomic + pgvector with `::vector` casts)
+- Layer 8: `cfp/llm/tier1.py` + `tier2.py` (10/10 — JSON repair + 5-round chain)
+- Layer 9: `cfp/dedup.py` (20/20 — pgvector hot-path + sweep + merge)
+- Layer 10: `cfp/pipeline.py` + `cfp/cli.py` + `cfp/__main__.py` (7/7)
+- Layer 11: `cfp/analytics.py` (5/5 — PG → legacy-dict → generate_md)
+- Plus: `Makefile`, `scripts/test_postgres.sh`
+
+**Test totals**: 170/173 passing (3 live-Ollama skipped on cold-start probes)
+
+**Bugs caught and fixed during integration**:
+- `vectors.py`: pgvector 0.4.2 + psycopg 3.3.3 needs explicit `::vector`
+  casts — `register_vector(conn)` doesn't auto-adapt list[float] for `<=>`
+- `dedup_pg test`: `IN %s` with tuple param syntax-errors in psycopg3 →
+  use `= ANY(%s)` with list
+- `_json_repair.py`: needs `json5` for permissive parse on single-quoted
+  string values (regex repair only handled keys); added `json5` to reqs
+- `profile_intersection`: `nomic-embed-text` in PROFILE_MODELS didn't
+  match `nomic-embed-text:latest` returned by Ollama; added :latest suffix tolerance
+
+**End-to-end live verified**:
+- `python -m cfp doctor` → all 5 checks green
+- `python -m cfp list-models` → `qwen3:4b-q4_K_M qwen3:14b-q4_K_M mistral-nemo:12b nomic-embed-text`
+- `python -m cfp init-db` → idempotent against running cfp_postgres
+- `make help` → 20 targets listed
+
+**Commits this session**: ~25 commits, all pushed to origin/main.
+
+**Pending**: P5 validation (real WikiCFP scrape + 1-month real-data run).
+v2 work: AGE graph, Tier 3+4, GCS sync, DuckDB, ontology pipeline.

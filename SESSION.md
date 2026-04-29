@@ -1,7 +1,7 @@
 # Session State — CFP Conference Knowledge Pipeline
 
 > Read this at the start of every new session for full context in ~2 minutes.
-> Last updated: 2026-04-29
+> Last updated: 2026-04-29 (v1 fully implemented, 170/173 tests passing)
 
 ---
 
@@ -99,24 +99,41 @@ Full spec: `context.md` · Prompts: `prompts.md` · Deep arch: `arch.md` · Lear
 | `codegen/09_llm_client.md` | `cfp/llm/client.py` + `tools.py` | 2026-04-26 (gap audit: single OLLAMA_HOST, get_available_models, profile_intersection) |
 | `codegen/11_analytics_generate.md` | `cfp/analytics.py` + `generate_md.py` | 2026-04-26 (patched: `paper_deadline::VARCHAR` in SQL; all deadline refs updated) |
 
-### Codegen specs — NOT YET WRITTEN
+### Codegen specs — NOT YET WRITTEN (v2 only)
 | Spec | Module |
 |---|---|
-| `codegen/02` | `cfp/prompts_parser.py` |
-| `codegen/03` | `cfp/fetch.py` |
-| `codegen/06` | `cfp/graph.py` (Apache AGE) |
-| `codegen/07` | `cfp/queue.py` (Redis) |
-| `codegen/08` | `cfp/vectors.py` + `cfp/embed.py` |
-| `codegen/10` | `cfp/llm/tier1..4.py` |
-| `codegen/12` | `cfp/pipeline.py` + `cfp/cli.py` |
-| `codegen/13` | `setup.sh` + `docker-compose.yml` + `Makefile` |
-| `codegen/14` | `AGENTS.md` + `PATTERNS.md` |
-| `codegen/15` | `cfp/dedup.py` |
-| `codegen/16` | `cfp/sync.py` |
-| `codegen/17` | `cfp/ontology.py` |
+| `codegen/06` | `cfp/graph.py` (Apache AGE) — v2 |
+| `codegen/14` | `AGENTS.md` + `PATTERNS.md` — v2 |
+| `codegen/16` | `cfp/sync.py` (GCS) — v2 |
+| `codegen/17` | `cfp/ontology.py` — v2 |
 
-### Implementation — NOT YET STARTED
-`cfp/` package does not exist. All modules are unimplemented.
+### Implementation ✅ v1 COMPLETE (2026-04-29)
+The `cfp/` package is fully implemented per all v1 codegen specs.
+- 18 Python modules totalling ~5800 LOC of source + ~3000 LOC of tests
+- 170/173 tests passing (3 skipped — live Ollama smoke tests)
+- End-to-end verified: `python -m cfp doctor` reports all green
+
+| File | LOC | Tests | Status |
+|---|---|---|---|
+| `config.py` | 60 | smoke | ✅ |
+| `cfp/__init__.py` | 0 | — | ✅ |
+| `cfp/__main__.py` | 4 | covered by cli | ✅ |
+| `cfp/models.py` | 230 | smoke | ✅ |
+| `cfp/prompts_parser.py` | 200 | 13/13 | ✅ |
+| `cfp/fetch.py` | 270 | 15/15 | ✅ |
+| `cfp/db.py` | 770 | 12/12 | ✅ |
+| `cfp/queue.py` | 440 | 30/30 | ✅ |
+| `cfp/parsers/wikicfp.py` + ai_deadlines + 9 stubs | 280 | 18/18 | ✅ |
+| `cfp/llm/client.py` + tools.py + __init__ | 470 | 28/31 | ✅ |
+| `cfp/llm/_json_repair.py` + _tokens.py | 70 | covered by tier | ✅ |
+| `cfp/llm/tier1.py` + tier2.py | 540 | 10/10 | ✅ |
+| `cfp/embed.py` | 142 | 6/6 | ✅ |
+| `cfp/vectors.py` | 320 | 6/6 | ✅ |
+| `cfp/dedup.py` | 561 | 20/20 | ✅ |
+| `cfp/pipeline.py` | 200 | covered by cli | ✅ |
+| `cfp/cli.py` | 220 | 7/7 | ✅ |
+| `cfp/analytics.py` | 110 | 5/5 | ✅ |
+| `Makefile` + `scripts/test_postgres.sh` | 200 | shell-verified | ✅ |
 
 ---
 
@@ -174,16 +191,16 @@ Full answers: `arch.md §1`
 - [ ] `devstral-small-2:24b` (~15 GB) — agentic coding (tight fit; verify)
 - [ ] `codev-r1-rl-qwen-7b` (~5 GB, HuggingFace GGUF) — Verilog/RTL specialist
 
-### P1 — Write missing v1 codegen specs
-- [ ] `codegen/02` — `cfp/prompts_parser.py`
-- [ ] `codegen/03` — `cfp/fetch.py` (aiohttp, not requests — arch.md S13)
-- [ ] `codegen/07` — `cfp/queue.py` (Redis)
-- [ ] `codegen/08` — `cfp/vectors.py` + `cfp/embed.py`
-- [ ] `codegen/13` — `docker-compose.yml` (`pgvector/pgvector:pg16`) + `Makefile`
-- [ ] `codegen/15` — `cfp/dedup.py` (pgvector-only for v1)
-- [ ] `codegen/16` — `cfp/sync.py` (GCS pull/push)
-- [ ] `codegen/10` — `cfp/llm/tier1.py` + `tier2.py`
-- [ ] `codegen/12` — `cfp/pipeline.py` + `cfp/cli.py`
+### P1 — Write missing v1 codegen specs ✅ COMPLETE (2026-04-29)
+- [x] `codegen/02` — `cfp/prompts_parser.py`
+- [x] `codegen/03` — `cfp/fetch.py` (aiohttp)
+- [x] `codegen/07` — `cfp/queue.py` (Redis)
+- [x] `codegen/08` — `cfp/vectors.py` + `cfp/embed.py`
+- [x] `codegen/13` — `docker-compose.yml` + `Makefile` (Makefile spec'd; compose pre-existed)
+- [x] `codegen/15` — `cfp/dedup.py` (pgvector-only for v1)
+- [ ] `codegen/16` — `cfp/sync.py` (GCS) — **deferred to v2**
+- [x] `codegen/10` — `cfp/llm/tier1.py` + `tier2.py`
+- [x] `codegen/12` — `cfp/pipeline.py` + `cfp/cli.py`
 
 ### P2 — Patch stale written specs ✅ COMPLETE
 - [x] Spec 04: `paper_deadline=` throughout — done 2026-04-26
@@ -193,24 +210,19 @@ Full answers: `arch.md §1`
 - [ ] Create `ontology/seed_concepts.json` (13 Category values + ~50 subconcepts)
 - [ ] Add `bootstrap-ontology` CLI command to spec 12
 
-### P4 — Implement v1 (strict dependency order)
-```
-spec 01  config.py + cfp/models.py          ← START HERE
-spec 02  cfp/prompts_parser.py
-spec 03  cfp/fetch.py
-spec 04  cfp/parsers/wikicfp.py + ai_deadlines.py
-spec 05  cfp/db.py
-spec 07  cfp/queue.py
-spec 08  cfp/vectors.py + cfp/embed.py
-spec 09  cfp/llm/client.py + tools.py
-spec 10  cfp/llm/tier1.py + tier2.py
-spec 15  cfp/dedup.py
-spec 16  cfp/sync.py
-spec 12  cfp/pipeline.py + cfp/cli.py
-spec 13  docker-compose.yml + Makefile
-spec 11  cfp/analytics.py + generate_md.py
-         → Delete scraper.py after parsers/wikicfp.py verified
-```
+### P4 — Implement v1 ✅ COMPLETE (2026-04-29)
+All v1 modules implemented and tested. See "Current File State" above for
+per-module test counts. The `cfp/` package replaces `scraper.py` (kept as
+reference; copy of paired-row parsing logic is in `cfp/parsers/wikicfp.py`).
+
+Live verified:
+- `python -m cfp doctor` → all 5 checks green (PG, Redis, Ollama, models, queue)
+- `python -m cfp list-models` → returns `gpu_mid` PROFILE_MODELS
+- `python -m cfp init-db` idempotent against running cfp_postgres
+- `make help` lists all 20 ops targets
+
+Test totals: **170/173 passing** (3 skipped — live-Ollama smoke tests when
+Ollama probe times out on cold start).
 
 ### P5 — v1 validation + completion
 - [ ] Run v1 weekly for 1 month with real data
